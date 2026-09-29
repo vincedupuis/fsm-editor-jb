@@ -1,0 +1,70 @@
+<idea-plugin>
+    <id>com.vincegosoftware.fsmeditor</id>
+    <name>FSM Editor - UML State Machines</name>
+    <vendor url="https://github.com/vincedupuis/fsm-editor-jb">VinceGoSoftware</vendor>
+
+    <description><![CDATA[
+    <p>Visual editor to create, edit and visualize <b>UML 2.5.1 state machines</b> in IntelliJ IDEA and the other JetBrains IDEs.</p>
+    <ul>
+      <li>Composite, orthogonal and submachine states, all pseudostates, connection point references,
+          entry/exit/do behaviors, deferrable events, time triggers and protocol state machines.</li>
+      <li>A diagram with a toolbox and a properties panel; the XMI text stays one click away in the Text tab.</li>
+      <li>Live validation of the UML well-formedness rules, on the diagram and in the Problems tool window.</li>
+      <li>SVG export, and code generation from Handlebars templates with the <code>fsm</code> generator.</li>
+    </ul>
+    <p><code>*.fsm</code> files are standard XMI 2.5.1: the UML model plus its UML DI layout.
+    They are the same files as in FSM Editor for VS Code and for Visual Studio, and diagram elements
+    can be copied and pasted between the three editors.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.xml</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType name="FSM State Machine" implementationClass="com.vincegosoftware.fsmeditor.FsmFileType"
+                  fieldName="INSTANCE" language="XML" extensions="fsm"/>
+        <fileEditorProvider implementation="com.vincegosoftware.fsmeditor.editor.FsmEditorProvider"/>
+        <standardResourceProvider implementation="com.vincegosoftware.fsmeditor.services.FsmResources"/>
+        <externalAnnotator language="XML" implementationClass="com.vincegosoftware.fsmeditor.services.FsmAnnotator"/>
+        <applicationConfigurable parentId="tools" id="fsmEditor" displayName="FSM Editor"
+                                 instance="com.vincegosoftware.fsmeditor.settings.FsmConfigurable"/>
+        <notificationGroup id="FSM Editor" displayType="BALLOON"/>
+        <toolWindow id="FSM Code Generation" anchor="bottom" icon="/icons/fsm.svg" canCloseContents="false"
+                    factoryClass="com.vincegosoftware.fsmeditor.codegen.CodeGenToolWindowFactory"/>
+    </extensions>
+
+    <actions>
+        <action id="FsmEditor.NewStateMachine" class="com.vincegosoftware.fsmeditor.NewStateMachineAction"
+                text="State Machine" description="Create a UML state machine (.fsm)" icon="/icons/fsm.svg">
+            <add-to-group group-id="NewGroup" anchor="last"/>
+        </action>
+        <action id="FsmEditor.GenerateCode" class="com.vincegosoftware.fsmeditor.GenerateCodeAction"
+                text="Generate Code..." description="Generate source code from the state machine with a Handlebars template"/>
+        <action id="FsmEditor.ExportSvg" class="com.vincegosoftware.fsmeditor.ExportSvgAction"
+                text="Export as SVG..." description="Save the state machine diagram as an SVG image"/>
+        <action id="FsmEditor.OpenAsText" class="com.vincegosoftware.fsmeditor.OpenAsTextAction"
+                text="Open as XMI Text" description="Show the XMI text of the state machine"/>
+        <action id="FsmEditor.OpenInDiagram" class="com.vincegosoftware.fsmeditor.OpenInDiagramAction"
+                text="Open in FSM Editor" description="Show the state machine diagram"/>
+
+        <group id="FsmEditor.FileActions">
+            <separator/>
+            <reference ref="FsmEditor.GenerateCode"/>
+            <reference ref="FsmEditor.ExportSvg"/>
+            <reference ref="FsmEditor.OpenAsText"/>
+            <reference ref="FsmEditor.OpenInDiagram"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
+        </group>
+
+        <group id="FsmEditor.ToolsMenu" text="FSM Editor" popup="true">
+            <action id="FsmEditor.NewStateMachineInFolder" class="com.vincegosoftware.fsmeditor.NewStateMachineAction"
+                    text="New State Machine..." description="Create a UML state machine (.fsm)"/>
+            <reference ref="FsmEditor.GenerateCode"/>
+            <reference ref="FsmEditor.ExportSvg"/>
+            <reference ref="FsmEditor.OpenAsText"/>
+            <reference ref="FsmEditor.OpenInDiagram"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </group>
+    </actions>
+</idea-plugin>

@@ -1,0 +1,9 @@
+.gradle/
+.kotlin/
+build/
+.idea/
+*.iml
+out/
+# Copied by scripts/fetch-cli.sh (the fsm code generator, 60-100 MB per platform)
+plugin/cli/
+.intellijPlatform/
