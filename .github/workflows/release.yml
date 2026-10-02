@@ -1,0 +1,78 @@
+# On a version tag (v0.3.0), builds the plugin with the `fsm` code generator of
+# every platform, attaches it to the GitHub Release of that tag, and publishes it
+# to the JetBrains Marketplace when the JETBRAINS_MARKETPLACE_TOKEN secret is set
+# (a token from plugins.jetbrains.com > My Tokens).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  # Release of FSM Editor for VS Code whose `fsm` code generator the plugin bundles.
+  FSM_CLI_VERSION: 0.3.1
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the plugin version
+        run: |
+          version=$(sed -nE 's/^version *= *//p' gradle.properties)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match the plugin version $version" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Fetch the fsm code generators
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$FSM_CLI_VERSION" -R vincedupuis/fsm-editor-vscode -p "fsm-$FSM_CLI_VERSION-*" -D "$RUNNER_TEMP/fsm"
+          for archive in "$RUNNER_TEMP"/fsm/*; do
+            case "$archive" in
+              *.zip) unzip -q "$archive" -d "$RUNNER_TEMP/fsm" ;;
+              *.tar.gz) tar xzf "$archive" -C "$RUNNER_TEMP/fsm" ;;
+            esac
+          done
+          for dir in "$RUNNER_TEMP"/fsm/fsm-$FSM_CLI_VERSION-*/; do
+            platform=$(basename "$dir" | sed "s/^fsm-$FSM_CLI_VERSION-//")
+            mkdir -p plugin/cli
+            cp -R "$dir" "plugin/cli/$platform"
+          done
+          ls plugin/cli
+
+      - name: Test
+        run: ./gradlew :core:test :plugin:test
+
+      - name: Build the plugin
+        run: ./gradlew :plugin:buildPlugin :plugin:verifyPlugin
+
+      - name: Attach the plugin to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          zip="plugin/build/distributions/fsm-editor-$version.zip"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$zip" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$zip" --title "FSM Editor for JetBrains IDEs $version" --generate-notes
+          fi
+
+      - name: Publish to the JetBrains Marketplace
+        if: env.JETBRAINS_MARKETPLACE_TOKEN != ''
+        run: ./gradlew :plugin:publishPlugin

@@ -41,6 +41,10 @@ intellijPlatform {
             untilBuild = provider { null }
         }
     }
+    // publishPlugin uploads to the JetBrains Marketplace (see .github/workflows/release.yml).
+    publishing {
+        token = providers.environmentVariable("JETBRAINS_MARKETPLACE_TOKEN")
+    }
     buildSearchableOptions = false
     instrumentCode = false
     pluginVerification {
