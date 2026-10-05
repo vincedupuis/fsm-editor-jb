@@ -1,5 +1,7 @@
 # FSM Editor — UML State Machines for JetBrains IDEs
 
+[![JetBrains Marketplace version](https://img.shields.io/jetbrains/plugin/v/34709)](https://plugins.jetbrains.com/plugin/34709-fsm-editor--uml-state-machines)
+
 A visual editor for UML 2.5.1 state machines in IntelliJ IDEA and the other JetBrains IDEs (2024.3 and later). Open any `*.fsm` file to get a diagram with a toolbox, a properties panel, live validation, SVG export and code generation from templates. Files are standard XMI 2.5.1: the UML model plus its diagram layout in UML DI, in the same file.
 
 This is the JetBrains edition of [FSM Editor for VS Code](https://github.com/vincedupuis/fsm-editor-vscode) and [FSM Editor for Visual Studio](https://github.com/vincedupuis/fsm-editor-vs). The three editors use the same file format, rules and code generator, so a team can edit the same `.fsm` files in any of them, and copy and paste diagram elements between them.
