@@ -1,16 +1,19 @@
 <idea-plugin>
     <id>com.vincegosoftware.fsmeditor</id>
-    <name>FSM Editor - UML State Machines</name>
+    <name>FSM Editor - UML State Machines &amp; Code Generation</name>
     <vendor url="https://github.com/vincedupuis/fsm-editor-jb">VinceGoSoftware</vendor>
 
     <description><![CDATA[
-    <p>Visual editor to create, edit and visualize <b>UML 2.5.1 state machines</b> in IntelliJ IDEA and the other JetBrains IDEs.</p>
+    <p>Visual editor and <b>code generator</b> for <b>UML 2.5.1 state machines</b> in IntelliJ IDEA and the other JetBrains IDEs.</p>
     <ul>
+      <li><b>Code generation</b>: turn a machine into source code with Handlebars templates. A TypeScript template is
+          bundled, and templates for other languages can write several files per machine. The bundled <code>fsm</code>
+          generator also runs from a terminal or a build, so the IDE and CI produce the same code.</li>
       <li>Composite, orthogonal and submachine states, all pseudostates, connection point references,
           entry/exit/do behaviors, deferrable events, time triggers and protocol state machines.</li>
       <li>A diagram with a toolbox and a properties panel; the XMI text stays one click away in the Text tab.</li>
       <li>Live validation of the UML well-formedness rules, on the diagram and in the Problems tool window.</li>
-      <li>SVG export, and code generation from Handlebars templates with the <code>fsm</code> generator.</li>
+      <li>SVG export.</li>
     </ul>
     <p><code>*.fsm</code> files are standard XMI 2.5.1: the UML model plus its UML DI layout.
     They are the same files as in FSM Editor for VS Code and for Visual Studio, and diagram elements

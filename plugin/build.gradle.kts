@@ -34,7 +34,7 @@ intellijPlatform {
     projectName = "fsm-editor"
     pluginConfiguration {
         id = "com.vincegosoftware.fsmeditor"
-        name = "FSM Editor - UML State Machines"
+        name = "FSM Editor - UML State Machines & Code Generation"
         version = project.version.toString()
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")

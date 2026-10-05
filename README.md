@@ -1,10 +1,20 @@
-# FSM Editor — UML State Machines for JetBrains IDEs
+# FSM Editor — UML State Machines & Code Generation for JetBrains IDEs
 
 [![JetBrains Marketplace version](https://img.shields.io/jetbrains/plugin/v/34709)](https://plugins.jetbrains.com/plugin/34709-fsm-editor--uml-state-machines)
 
-A visual editor for UML 2.5.1 state machines in IntelliJ IDEA and the other JetBrains IDEs (2024.3 and later). Open any `*.fsm` file to get a diagram with a toolbox, a properties panel, live validation, SVG export and code generation from templates. Files are standard XMI 2.5.1: the UML model plus its diagram layout in UML DI, in the same file.
+A visual editor and code generator for UML 2.5.1 state machines in IntelliJ IDEA and the other JetBrains IDEs (2024.3 and later). Draw a machine in any `*.fsm` file, with a toolbox, a properties panel, live validation and SVG export, then generate its source code from templates, in the IDE or with the bundled `fsm` command-line generator. Files are standard XMI 2.5.1: the UML model plus its diagram layout in UML DI, in the same file.
 
 This is the JetBrains edition of [FSM Editor for VS Code](https://github.com/vincedupuis/fsm-editor-vscode) and [FSM Editor for Visual Studio](https://github.com/vincedupuis/fsm-editor-vs). The three editors use the same file format, rules and code generator, so a team can edit the same `.fsm` files in any of them, and copy and paste diagram elements between them.
+
+## Code generation
+
+*Generate Code...* turns a machine into source code with a [Handlebars](https://handlebarsjs.com/) template, running the `fsm` command-line generator of FSM Editor, which the plugin bundles. One template can write several files per machine. A TypeScript template is bundled, and any `*.hbs` template of your project can be used. The same generator runs from a terminal or a build:
+
+```sh
+fsm "models/**/*.fsm" --template ts --out src/generated
+```
+
+See **[docs/CODEGEN.md](docs/CODEGEN.md)** for the dialog, builds, and where templates and the code model are documented.
 
 ## UML support
 
@@ -31,16 +41,6 @@ A `.fsm` file opens with two tabs at the bottom of the editor: **Diagram** and *
 - **Submachines**: Alt+double-click a submachine state, or use the button in its properties, to open the referenced machine.
 
 Actions (**Tools › FSM Editor**, and the context menus of `.fsm` files in the Project view and of the editor tab): *New State Machine...*, *Generate Code...*, *Export as SVG...*, *Open as XMI Text*, *Open in FSM Editor*. *File › New › State Machine* creates a machine in the selected folder.
-
-## Code generation
-
-*Generate Code...* turns a machine into source code with a [Handlebars](https://handlebarsjs.com/) template, running the `fsm` command-line generator of FSM Editor, which the plugin bundles. One template can write several files per machine. A TypeScript template is bundled, and any `*.hbs` template of your project can be used. The same generator runs from a terminal or a build:
-
-```sh
-fsm "models/**/*.fsm" --template ts --out src/generated
-```
-
-See **[docs/CODEGEN.md](docs/CODEGEN.md)** for the dialog, builds, and where templates and the code model are documented.
 
 ## Development
 
