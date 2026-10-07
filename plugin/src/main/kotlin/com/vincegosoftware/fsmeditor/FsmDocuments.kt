@@ -1,7 +1,10 @@
 package com.vincegosoftware.fsmeditor
 
 import com.intellij.ide.highlighter.XmlLikeFileType
+import com.intellij.ide.scratch.ScratchFileCreationHelper
 import com.intellij.lang.xml.XMLLanguage
+import com.intellij.lang.xml.XMLParserDefinition
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -12,7 +15,12 @@ import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.WindowManager
+import com.intellij.psi.FileViewProvider
+import com.intellij.psi.impl.source.xml.XmlFileImpl
+import com.intellij.psi.tree.IFileElementType
+import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.Hrefs
+import com.vincegosoftware.fsmeditor.core.Xmi
 import com.vincegosoftware.fsmeditor.editor.FsmFileEditor
 import java.io.IOException
 import javax.swing.Icon
@@ -22,8 +30,40 @@ object FsmIcons {
     val FILE: Icon = IconLoader.getIcon("/icons/fsm.svg", FsmIcons::class.java)
 }
 
+/**
+ * The XML dialect of `*.fsm` files. A language of its own (rather than XML)
+ * lists state machines in File › New › Scratch File.
+ */
+object FsmLanguage : XMLLanguage(XMLLanguage.INSTANCE, "FSM") {
+    override fun getDisplayName() = "FSM State Machine"
+}
+
+/** Parses `*.fsm` files as XML. */
+class FsmParserDefinition : XMLParserDefinition() {
+    override fun getFileNodeType() = FILE
+
+    override fun createFile(viewProvider: FileViewProvider) = XmlFileImpl(viewProvider, FILE)
+
+    companion object {
+        private val FILE = IFileElementType(FsmLanguage)
+    }
+}
+
+/**
+ * New FSM scratch files start with the same machine as File › New › State Machine,
+ * in the diagram: without a caret offset the file opens in its first editor, not the text.
+ */
+class FsmScratchCreationHelper : ScratchFileCreationHelper() {
+    override fun prepareText(project: Project, context: Context, dataContext: DataContext): Boolean {
+        if (!context.text.isNullOrBlank()) return false
+        context.text = Xmi.toXmi(FsmModel.createDefault("StateMachine"))
+        context.caretOffset = -1
+        return true
+    }
+}
+
 /** `*.fsm` files: XMI documents, shown as XML in the Text tab. */
-object FsmFileType : XmlLikeFileType(XMLLanguage.INSTANCE) {
+object FsmFileType : XmlLikeFileType(FsmLanguage) {
     override fun getName() = "FSM State Machine"
     override fun getDescription() = "UML state machine (XMI)"
     override fun getDefaultExtension() = "fsm"

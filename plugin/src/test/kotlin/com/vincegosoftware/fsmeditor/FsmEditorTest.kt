@@ -1,10 +1,14 @@
 package com.vincegosoftware.fsmeditor
 
+import com.intellij.ide.scratch.ScratchFileCreationHelper
+import com.intellij.lang.LanguageUtil
 import com.intellij.lang.annotation.HighlightSeverity
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.util.Disposer
+import com.intellij.psi.xml.XmlFile
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.vincegosoftware.fsmeditor.core.FsmModel
@@ -37,11 +41,21 @@ class FsmEditorTest : BasePlatformTestCase() {
     }
 
     fun testFsmFilesAreXmlWithTheDiagramFirst() {
-        val file = myFixture.configureByText("Machine.fsm", Xmi.toXmi(FsmModel.createDefault("Machine"))).virtualFile
+        val psi = myFixture.configureByText("Machine.fsm", Xmi.toXmi(FsmModel.createDefault("Machine")))
+        val file = psi.virtualFile
         assertSame(FsmFileType, file.fileType)
+        assertTrue(psi is XmlFile && psi.rootTag?.localName == "XMI")
+        assertTrue(FsmLanguage in LanguageUtil.getFileLanguages()) // listed in New › Scratch File
         val providers = FileEditorProviderManager.getInstance().getProviderList(project, file)
         assertTrue(providers.any { it is FsmEditorProvider })
         assertTrue(providers.size >= 2) // the diagram and the XMI text
+    }
+
+    fun testNewScratchFilesStartWithAMachine() {
+        val context = ScratchFileCreationHelper.Context().apply { language = FsmLanguage }
+        ScratchFileCreationHelper.EXTENSION.forLanguage(FsmLanguage).prepareText(project, context, DataContext.EMPTY_CONTEXT)
+        assertEquals(Xmi.toXmi(FsmModel.createDefault("StateMachine")), context.text)
+        assertEquals(-1, context.caretOffset) // opens in the diagram, not at an offset in the text
     }
 
     fun testDiagramEditsAreOneUndoableDocumentChange() {

@@ -25,7 +25,9 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="FSM State Machine" implementationClass="com.vincegosoftware.fsmeditor.FsmFileType"
-                  fieldName="INSTANCE" language="XML" extensions="fsm"/>
+                  fieldName="INSTANCE" language="FSM" extensions="fsm"/>
+        <lang.parserDefinition language="FSM" implementationClass="com.vincegosoftware.fsmeditor.FsmParserDefinition"/>
+        <scratch.creationHelper language="FSM" implementationClass="com.vincegosoftware.fsmeditor.FsmScratchCreationHelper"/>
         <fileEditorProvider implementation="com.vincegosoftware.fsmeditor.editor.FsmEditorProvider"/>
         <standardResourceProvider implementation="com.vincegosoftware.fsmeditor.services.FsmResources"/>
         <externalAnnotator language="XML" implementationClass="com.vincegosoftware.fsmeditor.services.FsmAnnotator"/>
