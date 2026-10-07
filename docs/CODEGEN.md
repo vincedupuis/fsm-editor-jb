@@ -11,7 +11,7 @@ FSM Editor for JetBrains IDEs generates source code with the **same `fsm` comman
 
 Run **Generate Code...** from the diagram toolbar (**Code**), the context menu of a `.fsm` file in the Project view, the context menu of the editor tab, or **Tools › FSM Editor**. A dialog asks for:
 
-1. **The template**: the templates bundled with the generator (`ts`), any `*.hbs` file of the project, or **Browse...**.
+1. **The template**: the templates bundled with the generator (`ts`, `sml`), any `*.hbs` file of the project, or **Browse...**.
 2. **The output folder.** Generated files are overwritten every time.
 
 The last template, and the last output folder of each machine, are remembered.
@@ -58,4 +58,4 @@ Set the option to use a newer generator than the bundled one, your own build, or
 
 Templates are Handlebars files, optionally with YAML front matter. One template writes any number of files per machine through `{{#file "path"}}` blocks. They can't run code: every helper is built into the generator.
 
-The TypeScript template (`ts`), writing templates for other languages (C#, C++, Java, Kotlin, Python...), the helpers, the code model the templates receive, and the execution semantics of the generated code are documented with the generator, in [FSM Editor for VS Code's CODEGEN.md](https://github.com/vincedupuis/fsm-editor-vscode/blob/main/docs/CODEGEN.md). Templates in your project are listed in the Generate Code dialog, so you can keep them next to your models.
+The bundled templates, TypeScript (`ts`) and [C++17 for Boost.SML](https://github.com/vincedupuis/fsm-editor-vscode/blob/main/docs/CODEGEN.md#the-boostsml-template) (`sml`), writing templates for other languages (C#, C++, Java, Kotlin, Python...), the helpers, the code model the templates receive, and the execution semantics of the generated code are documented with the generator, in [FSM Editor for VS Code's CODEGEN.md](https://github.com/vincedupuis/fsm-editor-vscode/blob/main/docs/CODEGEN.md). Templates in your project are listed in the Generate Code dialog, so you can keep them next to your models.

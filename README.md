@@ -8,7 +8,7 @@ This is the JetBrains edition of [FSM Editor for VS Code](https://github.com/vin
 
 ## Code generation
 
-*Generate Code...* turns a machine into source code with a [Handlebars](https://handlebarsjs.com/) template, running the `fsm` command-line generator of FSM Editor, which the plugin bundles. One template can write several files per machine. A TypeScript template is bundled, and any `*.hbs` template of your project can be used. The same generator runs from a terminal or a build:
+*Generate Code...* turns a machine into source code with a [Handlebars](https://handlebarsjs.com/) template, running the `fsm` command-line generator of FSM Editor, which the plugin bundles. One template can write several files per machine. Two templates are bundled, TypeScript (`ts`) and C++17 for [Boost.SML](https://github.com/boost-ext/sml) (`sml`), and any `*.hbs` template of your project can be used. The same generator runs from a terminal or a build:
 
 ```sh
 fsm "models/**/*.fsm" --template ts --out src/generated

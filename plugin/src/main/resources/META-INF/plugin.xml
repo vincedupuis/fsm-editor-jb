@@ -6,8 +6,8 @@
     <description><![CDATA[
     <p>Visual editor and <b>code generator</b> for <b>UML 2.5.1 state machines</b> in IntelliJ IDEA and the other JetBrains IDEs.</p>
     <ul>
-      <li><b>Code generation</b>: turn a machine into source code with Handlebars templates. A TypeScript template is
-          bundled, and templates for other languages can write several files per machine. The bundled <code>fsm</code>
+      <li><b>Code generation</b>: turn a machine into source code with Handlebars templates. TypeScript and C++
+          (Boost.SML) templates are bundled, and templates for other languages can write several files per machine. The bundled <code>fsm</code>
           generator also runs from a terminal or a build, so the IDE and CI produce the same code.</li>
       <li>Composite, orthogonal and submachine states, all pseudostates, connection point references,
           entry/exit/do behaviors, deferrable events, time triggers and protocol state machines.</li>
