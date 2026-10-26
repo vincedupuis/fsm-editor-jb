@@ -154,7 +154,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
                 val fold = 12.0
                 sb.append("<path class=\"shape\" d=\"M${f(x)},${f(y)} H${f(x + w - fold)} L${f(x + w)},${f(y + fold)} V${f(y + h)} H${f(x)} Z\"/>")
                 sb.append("<path class=\"stroke\" d=\"M${f(x + w - fold)},${f(y)} V${f(y + fold)} H${f(x + w)}\" style=\"stroke-width:1\"/>")
-                val lines = v.text.split('\n')
+                val lines = Geometry.commentLines(v.text, w - 16)
                 for ((i, line) in lines.withIndex()) {
                     if (16 + i * 14 < h) sb.append(text(x + 8, y + 17 + i * 14, "", line, "start"))
                 }

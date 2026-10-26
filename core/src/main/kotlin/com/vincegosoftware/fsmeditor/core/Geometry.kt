@@ -219,6 +219,34 @@ object Geometry {
     /** Estimated width of a transition label in the 11px diagram font. */
     fun estimateLabelWidth(label: String): Double = label.length * 6.6
 
+    /**
+     * Splits a comment's text into the lines drawn in its box, wrapping at spaces (or inside words too long
+     * for a line) so that each line is at most [width] wide as measured by [measure] in the 11px diagram font.
+     */
+    fun commentLines(text: String, width: Double, measure: (String) -> Double = ::estimateLabelWidth): List<String> {
+        val lines = mutableListOf<String>()
+        for (para in text.split('\n')) {
+            var line = ""
+            for (word in para.trimEnd('\r').split(' ')) {
+                val candidate = if (line.isNotEmpty()) "$line $word" else word
+                if (line.isEmpty() || measure(candidate) <= width) {
+                    line = candidate
+                } else {
+                    lines.add(line)
+                    line = word
+                }
+                while (line.length > 1 && measure(line) > width) {
+                    var k = line.length - 1
+                    while (k > 1 && measure(line.substring(0, k)) > width) k--
+                    lines.add(line.substring(0, k))
+                    line = line.substring(k)
+                }
+            }
+            lines.add(line)
+        }
+        return lines
+    }
+
     /** Bounds of everything drawn, including captions and transition labels. */
     fun contentBounds(ix: ModelIndex, labelWidth: (String) -> Double = ::estimateLabelWidth): RectD {
         val model = ix.model

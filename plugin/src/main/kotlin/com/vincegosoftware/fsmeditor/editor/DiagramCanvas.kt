@@ -447,8 +447,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 val fold = th.stroke(1.0)
                 g.line(fold, stroke, x + w - f, y, x + w - f, y + f)
                 g.line(fold, stroke, x + w - f, y + f, x + w, y + f)
-                for ((i, line) in v.text.split('\n').withIndex()) {
-                    if (16 + i * 14 < h) drawText(g, x + 8, y + 17 + i * 14, line.trimEnd('\r'), 11.0, textColor, TextAnchor.Start)
+                val fm = g.getFontMetrics(font(11.0))
+                val lines = Geo.commentLines(v.text, w - 16) { fm.getStringBounds(it, g).width }
+                for ((i, line) in lines.withIndex()) {
+                    if (16 + i * 14 < h) drawText(g, x + 8, y + 17 + i * 14, line, 11.0, textColor, TextAnchor.Start)
                 }
             }
         }
