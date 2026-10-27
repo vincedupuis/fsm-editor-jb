@@ -15,6 +15,7 @@ import com.intellij.openapi.actionSystem.Presentation
 import com.intellij.openapi.actionSystem.ex.CustomComponentAction
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbAwareAction
+import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.JBColor
@@ -39,6 +40,7 @@ import com.vincegosoftware.fsmeditor.core.SvgExport
 import com.vincegosoftware.fsmeditor.core.TextAnchor
 import com.vincegosoftware.fsmeditor.core.Tools
 import com.vincegosoftware.fsmeditor.core.VertexType
+import com.vincegosoftware.fsmeditor.settings.FsmSettings
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -108,6 +110,10 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     private var issuesById: Map<String, List<Issue>> = emptyMap()
     private var firstLoad = true
     private var inline: InlineEdit? = null
+    private val toolboxPane: ToolPane
+    private val propsPane: ToolPane
+    private val westDock = JPanel(BorderLayout())
+    private val eastDock = JPanel(BorderLayout())
 
     var session: DiagramSession? = null
         private set
@@ -124,19 +130,27 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
 
         val toolboxScroll = JBScrollPane(toolbox).apply {
             preferredSize = Dimension(JBUI.scale(176), 0)
-            border = JBUI.Borders.customLineRight(JBColor.border())
+            border = JBUI.Borders.empty()
             horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
         val propsScroll = JBScrollPane(props).apply {
             preferredSize = Dimension(JBUI.scale(280), 0)
-            border = JBUI.Borders.customLineLeft(JBColor.border())
+            border = JBUI.Borders.empty()
             horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
+        toolboxPane = ToolPane("Toolbox", AllIcons.Toolwindows.ToolWindowPalette, toolboxScroll, ::onPaneChanged)
+        propsPane = ToolPane("Properties", AllIcons.Actions.Properties, propsScroll, ::onPaneChanged)
         add(toolbar, BorderLayout.NORTH)
         add(status, BorderLayout.SOUTH)
-        add(toolboxScroll, BorderLayout.WEST)
-        add(propsScroll, BorderLayout.EAST)
+        add(westDock, BorderLayout.WEST)
+        add(eastDock, BorderLayout.EAST)
         add(layers, BorderLayout.CENTER)
+        // Clicking the diagram takes the focus away from unpinned and undocked panels.
+        canvas.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) = hideAutoHidingPanes()
+        })
+        loadPanes()
+        arrangePanes()
 
         canvas.onViewChanged { updateZoomLabel() }
         canvas.onToolChanged {
@@ -154,6 +168,84 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         buildToolbar()
         buildToolbox()
         renderStatus()
+    }
+
+    override fun addNotify() {
+        super.addNotify()
+        openPanels.add(this)
+    }
+
+    override fun removeNotify() {
+        openPanels.remove(this)
+        super.removeNotify()
+    }
+
+    // ---------------------------------------------------------------- side panels
+
+    /** A toolbar button that shows and hides a panel, selected while it's shown. */
+    private fun paneToggle(pane: ToolPane): AnAction =
+        object : DumbAwareToggleAction(pane.title, "Show or hide the ${pane.title.lowercase()}", pane.icon) {
+            override fun isSelected(e: AnActionEvent) = pane.shown
+            override fun setSelected(e: AnActionEvent, state: Boolean) = pane.change(pane.mode, state)
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+        }
+
+    private fun loadPanes() {
+        val o = FsmSettings.getInstance().state
+        fun mode(name: String) = PaneMode.entries.firstOrNull { it.name == name } ?: PaneMode.DockPinned
+        // Unpinned and undocked panels open hidden, as their tool windows do.
+        mode(o.toolboxMode).let { toolboxPane.apply(it, o.toolboxShown && !it.autoHides) }
+        mode(o.propertiesMode).let { propsPane.apply(it, o.propertiesShown && !it.autoHides) }
+    }
+
+    /** A panel changed in this editor: show it, save the layout and apply it to the other editors. */
+    private fun onPaneChanged(pane: ToolPane) {
+        arrangePanes()
+        val o = FsmSettings.getInstance().state
+        o.toolboxMode = toolboxPane.mode.name
+        o.toolboxShown = toolboxPane.shown
+        o.propertiesMode = propsPane.mode.name
+        o.propertiesShown = propsPane.shown
+        for (other in openPanels.toList()) {
+            if (other === this) continue
+            other.loadPanes()
+            other.arrangePanes()
+        }
+    }
+
+    private fun hideAutoHidingPanes() {
+        var changed = false
+        for (pane in listOf(toolboxPane, propsPane)) {
+            if (pane.shown && pane.mode.autoHides) {
+                pane.apply(pane.mode, false)
+                changed = true
+            }
+        }
+        if (changed) arrangePanes()
+    }
+
+    private fun arrangePanes() {
+        for ((pane, left) in listOf(toolboxPane to true, propsPane to false)) {
+            pane.parent?.remove(pane)
+            if (!pane.shown) continue
+            when (pane.mode) {
+                PaneMode.DockPinned, PaneMode.DockUnpinned -> {
+                    pane.border = if (left) JBUI.Borders.customLineRight(JBColor.border()) else JBUI.Borders.customLineLeft(JBColor.border())
+                    (if (left) westDock else eastDock).add(pane, BorderLayout.CENTER)
+                }
+                PaneMode.Undock -> {
+                    pane.border = if (left) JBUI.Borders.customLineRight(JBColor.border()) else JBUI.Borders.customLineLeft(JBColor.border())
+                    layers.add(pane, PANE_LAYER as Any)
+                }
+                PaneMode.Float -> {
+                    pane.border = JBUI.Borders.customLine(JBColor.border())
+                    layers.add(pane, PANE_LAYER as Any)
+                }
+            }
+        }
+        revalidate()
+        layers.doLayout()
+        repaint()
     }
 
     /** Rebuilds the parts that hold theme colors. */
@@ -480,6 +572,9 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             add(action("SVG", AllIcons.ToolbarDecorator.Export, host::exportSvg, true).also { it.templatePresentation.description = "Export as SVG" })
             addSeparator()
             add(action("XMI", AllIcons.FileTypes.Xml, host::openAsText, true).also { it.templatePresentation.description = "Open as XMI text" })
+            addSeparator()
+            add(paneToggle(toolboxPane))
+            add(paneToggle(propsPane))
         }
         val manager = ActionManager.getInstance()
         val leftBar = manager.createActionToolbar("FsmEditor.Left", left, true).apply { targetComponent = canvas }
@@ -719,6 +814,17 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         override fun doLayout() {
             canvas.setBounds(0, 0, width, height)
             parseError.setBounds(0, 0, width, height)
+            for ((pane, left) in listOf(toolboxPane to true, propsPane to false)) {
+                if (pane.parent !== this) continue
+                val w = pane.preferredSize.width
+                if (pane.mode == PaneMode.Float) {
+                    val gap = JBUI.scale(24)
+                    val at = pane.floatAt ?: Point(if (left) gap else maxOf(0, width - w - gap), gap)
+                    pane.setBounds(at.x, at.y, w, minOf(JBUI.scale(420), maxOf(JBUI.scale(120), height - at.y - JBUI.scale(8))))
+                } else {
+                    pane.setBounds(if (left) 0 else width - w, 0, w, height)
+                }
+            }
             if (toast.isVisible) {
                 val size = toast.preferredSize
                 val w = minOf(size.width, width - JBUI.scale(24))
@@ -756,6 +862,12 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     }
 
     companion object {
+        /** Below the inline editor's layer, above the canvas. */
+        private const val PANE_LAYER = 99
+
+        /** Diagram editors on screen, which share one panel layout. */
+        private val openPanels = LinkedHashSet<EditorPanel>()
+
         fun severityGlyph(s: Severity) = when (s) {
             Severity.Error -> "✕"
             Severity.Warning -> "⚠"

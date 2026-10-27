@@ -36,6 +36,7 @@ A `.fsm` file opens with two tabs at the bottom of the editor: **Diagram** and *
 - **Routing**: double-click a transition to add a bend point, double-click a bend point to remove it, and drag labels to move them. Alt while dragging turns off the grid.
 - **Regions**: use the Add Region tool (R) or the properties panel.
 - **View**: right-drag, middle-drag or Space+drag pans, the mouse wheel zooms (Shift+wheel pans sideways), F fits the diagram.
+- **Panels**: the toolbox and the properties panel work like tool windows. The ⋮ Options menu sets the View Mode (Dock Pinned, Dock Unpinned, Undock, Float), Hide closes a panel, and the Toolbox and Properties buttons at the right of the toolbar show and hide them. Unpinned and undocked panels hide when you click the diagram. The layout applies to every diagram.
 - **Editing**: Delete removes the selection. Copy, Cut and Paste (⌘C/⌘X/⌘V, Ctrl on Windows and Linux) work between diagrams and with the other editors. ⌘D / Ctrl+D duplicates. Arrow keys nudge (Shift for 10px). Undo and redo are the IDE's.
 - **Shortcuts**: S state, X final, I initial, H history, C choice, J junction, N comment, T transition, R region, V/Esc select. Shift+click a tool to keep it active.
 - **Submachines**: Alt+double-click a submachine state, or use the button in its properties, to open the referenced machine.

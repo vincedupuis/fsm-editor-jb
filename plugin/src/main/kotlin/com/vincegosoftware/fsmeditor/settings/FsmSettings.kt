@@ -25,6 +25,11 @@ class FsmSettings : PersistentStateComponent<FsmSettings.Options> {
         var saveBeforeGenerating: Boolean = true
         /** Last template used to generate code. */
         var lastTemplate: String = ""
+        /** View mode ([com.vincegosoftware.fsmeditor.editor.PaneMode] name) and visibility of the diagram editors' toolbox and properties panel. */
+        var toolboxMode: String = "DockPinned"
+        var toolboxShown: Boolean = true
+        var propertiesMode: String = "DockPinned"
+        var propertiesShown: Boolean = true
     }
 
     private var options = Options()
