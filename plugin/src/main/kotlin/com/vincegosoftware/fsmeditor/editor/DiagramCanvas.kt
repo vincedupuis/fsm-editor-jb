@@ -222,8 +222,8 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             g.scale(zoom, zoom)
             val ix = s.index
             val sorted = Geo.drawingOrder(ix)
-            for (v in sorted.filter { it.type == VertexType.Comment }) drawAnchors(g, s, v)
             for (v in sorted) drawVertex(g, s, v)
+            for (v in sorted.filter { it.type == VertexType.Comment }) drawAnchors(g, s, v)
             for (t in s.model.transitions) drawTransition(g, s, t)
             drawOverlay(g, s)
         } finally {
