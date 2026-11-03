@@ -20,7 +20,7 @@ jobs:
     env:
       JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the tag matches the plugin version
         run: |
@@ -30,12 +30,16 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 21
 
-      - uses: gradle/actions/setup-gradle@v4
+      # `basic`: the MIT-licensed cache. The default (`enhanced`) since v6 is a
+      # proprietary component under Gradle's Terms of Use.
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
 
       - name: Fetch the fsm code generators
         env:

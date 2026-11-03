@@ -285,6 +285,7 @@ object Validation {
             }
         }
 
+        checkPseudostateCycles(model, ix, ::add)
         checkText(model, ix, ::add)
         checkReachability(model, ix, ::add)
         return issues
@@ -294,6 +295,72 @@ object Validation {
     fun name(v: Vertex?): String {
         if (v == null) return "?"
         return if (v.name.isNotEmpty()) "'${v.name}'" else v.type.label
+    }
+
+    /**
+     * Pseudostates that transitions go through in a cycle: a compound transition taking the cycle would never reach a
+     * state, and the code generator can't express it. One error per group of pseudostates linked by cycles, on its first
+     * vertex, naming the shortest cycle through it.
+     */
+    private fun checkPseudostateCycles(model: FsmModel, ix: ModelIndex, add: (String, Severity, String) -> Unit) {
+        // The pseudostates a compound transition goes on from (the machine's own entry and exit points end it).
+        fun passes(v: Vertex?): Boolean =
+            v != null &&
+                (v.type in listOf(VertexType.Junction, VertexType.Choice, VertexType.ShallowHistory, VertexType.DeepHistory, VertexType.Fork) ||
+                    ((v.type == VertexType.EntryPoint || v.type == VertexType.ExitPoint) && ix.vertices.containsKey(v.parent)))
+        fun next(v: Vertex): List<Vertex> =
+            ix.outgoing(v.id).filter { it.kind != TransitionKind.Internal }.mapNotNull { ix.vertex(it.target) }.filter(::passes)
+        fun previous(v: Vertex): List<Vertex> =
+            ix.incoming(v.id).filter { it.kind != TransitionKind.Internal }.mapNotNull { ix.vertex(it.source) }.filter(::passes)
+        /** [start] and every vertex reached from it through [step], breadth first, with the vertex each was reached from. */
+        fun walk(start: Vertex, step: (Vertex) -> List<Vertex>): LinkedHashMap<Vertex, Vertex?> {
+            val from = linkedMapOf<Vertex, Vertex?>(start to null)
+            val queue = arrayListOf(start)
+            var i = 0
+            while (i < queue.size) {
+                for (w in step(queue[i])) {
+                    if (!from.containsKey(w)) {
+                        from[w] = queue[i]
+                        queue.add(w)
+                    }
+                }
+                i++
+            }
+            return from
+        }
+        val done = HashSet<Vertex>()
+        for (v in model.vertices) {
+            // A vertex whose id is used again later is not the one transitions refer to.
+            if (!passes(v) || ix.vertex(v.id) !== v || v in done) continue
+            val forward = walk(v, ::next)
+            // The shortest cycle through v ends with the first vertex reached that has a transition back to v.
+            val last = forward.keys.firstOrNull { u -> next(u).any { it === v } } ?: continue
+            val backward = walk(v, ::previous)
+            for (u in forward.keys) if (backward.containsKey(u)) done.add(u)
+            val cycle = arrayListOf(v)
+            var u: Vertex? = last
+            while (u != null && u !== v) {
+                cycle.add(1, u)
+                u = forward[u]
+            }
+            cycle.add(v)
+            add(v.id, Severity.Error, "${cycleKinds(cycle)} form a cycle without a state: ${cycle.joinToString(" -> ") { name(it) }}.")
+        }
+    }
+
+    /** The kinds of pseudostates in [cycle]: `Junctions`, `Junctions and choices`, ... (as in the code generator's error). */
+    private fun cycleKinds(cycle: List<Vertex>): String {
+        val kinds = listOf(
+            "junctions" to setOf(VertexType.Junction),
+            "choices" to setOf(VertexType.Choice),
+            "history pseudostates" to setOf(VertexType.ShallowHistory, VertexType.DeepHistory),
+            "entry points" to setOf(VertexType.EntryPoint),
+            "exit points" to setOf(VertexType.ExitPoint),
+            "forks" to setOf(VertexType.Fork),
+        )
+        val found = kinds.filter { (_, types) -> cycle.any { it.type in types } }.map { it.first }
+        val text = if (found.size > 1) "${found.dropLast(1).joinToString(", ")} and ${found.last()}" else found[0]
+        return text.replaceFirstChar { it.uppercaseChar() }
     }
 
     /** Behaviors and conditions are argument-less function calls; triggers are event names or after(...). */

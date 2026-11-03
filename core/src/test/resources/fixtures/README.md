@@ -8,7 +8,8 @@ the same fixtures):
 - `expected.json`: validation issues of `examples/*.fsm` and of the cases below,
   and the results of every grammar check for a list of texts;
 - `<case>.fsm`: edge-case models (invalid text, broken structure, protocol
-  machine with stereotypes, context and documentation) written by `toXmi`;
+  machine with stereotypes, context and documentation, cycles of pseudostates)
+  written by `toXmi`;
 - `<case>.roundtrip.xmi`: `toXmi(fromXmi(<case>.fsm))`.
 
 They were generated with a small script bundling `src/xmi.ts`,
