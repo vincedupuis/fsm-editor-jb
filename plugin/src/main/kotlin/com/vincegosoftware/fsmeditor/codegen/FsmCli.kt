@@ -22,13 +22,19 @@ class CliResult(
 
 /**
  * Runs the `fsm` command-line code generator of FSM Editor (the same program
- * as in VS Code, Visual Studio and CI): `fsm <file> --template <hbs> --out <folder>`.
- * The plugin bundles it in cli/<platform>/, with its templates in cli/<platform>/templates.
+ * as in VS Code, Visual Studio and CI): `fsm <file> --template <hbs> --out <folder>`,
+ * or, for Jinja templates, fsm-generator (the same generator in Rust), which takes the
+ * same arguments and prints the same lines. The plugin bundles them in cli/<platform>/
+ * and generator/<platform>/, each with its templates in a templates/ folder next to it.
  */
 object FsmCli {
     private val ISSUE_LINE = Regex("^(.+?):(\\d+): (error|warning|info): (.*)$")
 
     private val exe: String get() = if (SystemInfo.isWindows) "fsm.exe" else "fsm"
+    private val generatorExe: String get() = if (SystemInfo.isWindows) "fsm-generator.exe" else "fsm-generator"
+
+    /** Whether a template is a Jinja one, run by fsm-generator rather than fsm. */
+    fun isJinja(template: String): Boolean = template.endsWith(".jinja", ignoreCase = true)
 
     /** Platform folder names, as in the generator's release archives (`fsm-<version>-<platform>`). */
     val platform: String
@@ -42,22 +48,27 @@ object FsmCli {
             return "$os-$arch"
         }
 
-    /** The executable bundled with the plugin, or null. */
-    fun bundled(): File? {
+    /** The executable bundled with the plugin in [folder] (`cli` for fsm, `generator` for fsm-generator), or null. */
+    private fun bundled(folder: String, exe: String): File? {
         // The plugin's jar is in <plugin>/lib.
         val jar = PathManager.getJarPathForClass(FsmCli::class.java) ?: return null
-        val dir = File(jar).parentFile?.parentFile?.resolve("cli") ?: return null
+        val dir = File(jar).parentFile?.parentFile?.resolve(folder) ?: return null
         return listOf(File(dir, "$platform/$exe"), File(dir, exe)).firstOrNull { it.isFile }
     }
 
-    /** The executable to run: the configured one, the bundled one, or one on the PATH. Null when none is found. */
-    fun locate(configured: String): File? {
+    /** The fsm executable to run: the configured one, the bundled one, or one on the PATH. Null when none is found. */
+    fun locate(configured: String): File? =
+        locate(configured, bundled("cli", exe), if (SystemInfo.isWindows) listOf("fsm.exe", "fsm.cmd") else listOf("fsm"))
+
+    /** The fsm-generator executable to run, found like [locate]. */
+    fun locateGenerator(configured: String): File? = locate(configured, bundled("generator", generatorExe), listOf(generatorExe))
+
+    private fun locate(configured: String, bundled: File?, names: List<String>): File? {
         if (configured.isNotBlank()) {
             val f = File(configured.trim().trim('"'))
             return if (f.isFile) f else null
         }
-        bundled()?.let { return it }
-        val names = if (SystemInfo.isWindows) listOf("fsm.exe", "fsm.cmd") else listOf("fsm")
+        bundled?.let { return it }
         for (dir in (System.getenv("PATH") ?: "").split(File.pathSeparatorChar)) {
             if (dir.isBlank()) continue
             for (name in names) {
@@ -68,9 +79,12 @@ object FsmCli {
         return null
     }
 
-    /** Templates shipped with the executable (the .hbs files of the templates folder next to it), where `-t <name>` finds them. */
-    fun bundledTemplates(cli: File): List<File> =
-        File(cli.absoluteFile.parentFile, "templates").listFiles { f -> f.name.endsWith(".hbs") }?.sortedBy { it.name.lowercase() } ?: emptyList()
+    /**
+     * Templates shipped with an executable (the .hbs files of the templates folder next to fsm, the .jinja
+     * files next to fsm-generator), where `-t <name>` finds them. Empty when [cli] is null.
+     */
+    fun bundledTemplates(cli: File?, extension: String = "hbs"): List<File> =
+        cli?.let { File(it.absoluteFile.parentFile, "templates").listFiles { f -> f.name.endsWith(".$extension") } }?.sortedBy { it.name.lowercase() } ?: emptyList()
 
     fun commandLine(cli: File, args: List<String>): String =
         (listOf(cli.path) + args).joinToString(" ") { if (it.isNotEmpty() && it.none { c -> c == ' ' || c == '"' || c == '\t' }) it else "\"" + it.replace("\"", "\\\"") + "\"" }
@@ -95,7 +109,7 @@ object FsmCli {
             CliIssue(resolve(workingDirectory, m.groupValues[1]), m.groupValues[2].toInt(), severity, m.groupValues[4])
         }
         val exitCode = if (out.isTimeout) -1 else out.exitCode
-        return CliResult(exitCode, output, if (out.isTimeout) errors + "fsm did not finish within 5 minutes." else errors, issues, written)
+        return CliResult(exitCode, output, if (out.isTimeout) errors + "${cli.nameWithoutExtension} did not finish within 5 minutes." else errors, issues, written)
     }
 
     private fun resolve(dir: File, path: String): String = File(path).let { if (it.isAbsolute) it else File(dir, path) }.normalize().path

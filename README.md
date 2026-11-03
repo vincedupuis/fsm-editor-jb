@@ -8,7 +8,7 @@ This is the JetBrains edition of [FSM Editor for VS Code](https://github.com/vin
 
 ## Code generation
 
-*Generate Code...* turns a machine into source code with a [Handlebars](https://handlebarsjs.com/) template, running the `fsm` command-line generator of FSM Editor, which the plugin bundles. One template can write several files per machine. Two templates are bundled, TypeScript (`ts`) and C++17 for [Boost.SML](https://github.com/boost-ext/sml) (`sml`), and any `*.hbs` template of your project can be used. The same generator runs from a terminal or a build:
+*Generate Code...* turns a machine into source code with a [Handlebars](https://handlebarsjs.com/) template, running the `fsm` command-line generator of FSM Editor, or with a [Jinja](https://jinja.palletsprojects.com/) template, running [fsm-generator](https://github.com/vincedupuis/fsm-generator), the same generator in Rust. The plugin bundles both. One template can write several files per machine. Two templates are bundled in both languages, TypeScript (`ts`) and C++17 for [Boost.SML](https://github.com/boost-ext/sml) (`sml`), and any `*.hbs` or `*.jinja` template of your project can be used. The same generator runs from a terminal or a build:
 
 ```sh
 fsm "models/**/*.fsm" --template ts --out src/generated
@@ -70,5 +70,5 @@ Install the ZIP with Settings › Plugins › ⚙ › *Install Plugin from Disk.
   - `codegen/`: running the `fsm` generator, its dialog and tool window
   - `Actions.kt`, `settings/`: actions and Settings › Tools › FSM Editor
 - `core/src/test/`: tests, including parity tests against reference results of the VS Code extension (`resources/fixtures/`)
-- `scripts/fetch-cli.sh`: copies the code generator into the plugin
+- `scripts/fetch-cli.sh`: copies the code generator into the plugin; fsm-generator goes in `plugin/generator/<platform>/`, unpacked from its GitHub Releases
 - `docs/`: UML conformance and code generation

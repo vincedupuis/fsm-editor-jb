@@ -6,7 +6,7 @@
     <description><![CDATA[
     <p>Visual editor and <b>code generator</b> for <b>UML 2.5.1 state machines</b> in IntelliJ IDEA and the other JetBrains IDEs.</p>
     <ul>
-      <li><b>Code generation</b>: turn a machine into source code with Handlebars templates. TypeScript and C++
+      <li><b>Code generation</b>: turn a machine into source code with Handlebars or Jinja templates. TypeScript and C++
           (Boost.SML) templates are bundled, and templates for other languages can write several files per machine. The bundled <code>fsm</code>
           generator also runs from a terminal or a build, so the IDE and CI produce the same code.</li>
       <li>Composite, orthogonal and submachine states, all pseudostates, connection point references,
@@ -44,7 +44,7 @@
             <add-to-group group-id="NewGroup" anchor="last"/>
         </action>
         <action id="FsmEditor.GenerateCode" class="com.vincegosoftware.fsmeditor.GenerateCodeAction"
-                text="Generate Code..." description="Generate source code from the state machine with a Handlebars template"/>
+                text="Generate Code..." description="Generate source code from the state machine with a Handlebars or Jinja template"/>
         <action id="FsmEditor.ExportSvg" class="com.vincegosoftware.fsmeditor.ExportSvgAction"
                 text="Export as SVG..." description="Save the state machine diagram as an SVG image"/>
         <action id="FsmEditor.OpenAsText" class="com.vincegosoftware.fsmeditor.OpenAsTextAction"

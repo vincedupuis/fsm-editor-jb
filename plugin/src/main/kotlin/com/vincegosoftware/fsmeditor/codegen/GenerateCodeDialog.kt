@@ -64,7 +64,7 @@ class GenerateCodeDialog(
         val browse = JButton("Browse...")
         browse.addActionListener {
             FileChooser.chooseFile(
-                FileChooserDescriptor(true, false, false, false, false, false).withFileFilter { it.extension == "hbs" },
+                FileChooserDescriptor(true, false, false, false, false, false).withFileFilter { it.extension == "hbs" || it.extension == "jinja" },
                 project, null,
             ) { file ->
                 val choice = TemplateChoice(file.path, file.nameWithoutExtension, file.path)
@@ -76,7 +76,7 @@ class GenerateCodeDialog(
         templates.add(JBScrollPane(list).apply { preferredSize = Dimension(JBUI.scale(480), JBUI.scale(150)) }, BorderLayout.CENTER)
         templates.add(JPanel(BorderLayout()).apply { add(browse, BorderLayout.WEST) }, BorderLayout.SOUTH)
         return FormBuilder.createFormBuilder()
-            .addComponent(JBLabel("Template (bundled templates, *.hbs files of the project, or Browse):"))
+            .addComponent(JBLabel("Template (bundled templates, *.hbs and *.jinja files of the project, or Browse):"))
             .addComponent(templates)
             .addVerticalGap(JBUI.scale(8))
             .addComponent(JBLabel("Output folder (generated files are overwritten):"))

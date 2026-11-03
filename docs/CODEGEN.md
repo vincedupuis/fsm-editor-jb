@@ -2,6 +2,8 @@
 
 FSM Editor for JetBrains IDEs generates source code with the **same `fsm` command-line generator** as FSM Editor for VS Code and for Visual Studio. The plugin doesn't reimplement code generation: it runs `fsm`, which it bundles, and shows the results in the IDE. The same templates therefore produce the same code from IntelliJ IDEA, VS Code, Visual Studio, a terminal or a CI build.
 
+Jinja templates (`.jinja`) are run by [fsm-generator](https://github.com/vincedupuis/fsm-generator) instead, the same generator in Rust with [MiniJinja](https://github.com/mitsuhiko/minijinja) templates, which the plugin bundles too. It takes the same options and reports problems the same way, and its bundled `ts.jinja` and `sml.jinja` generate the same files as `ts.hbs` and `sml.hbs`. The template's extension decides which program runs.
+
 - [From the IDE](#from-the-ide)
 - [From the command line and builds](#from-the-command-line-and-builds)
 - [Which fsm is used](#which-fsm-is-used)
@@ -11,7 +13,7 @@ FSM Editor for JetBrains IDEs generates source code with the **same `fsm` comman
 
 Run **Generate Code...** from the diagram toolbar (**Code**), the context menu of a `.fsm` file in the Project view, the context menu of the editor tab, or **Tools › FSM Editor**. A dialog asks for:
 
-1. **The template**: the templates bundled with the generator (`ts`, `sml`), any `*.hbs` file of the project, or **Browse...**.
+1. **The template**: the templates bundled with the generators (`ts` and `sml`, as *bundled Handlebars template* and *bundled Jinja template*), any `*.hbs` or `*.jinja` file of the project, or **Browse...**.
 2. **The output folder.** Generated files are overwritten every time.
 
 The last template, and the last output folder of each machine, are remembered.
@@ -53,6 +55,8 @@ In this order:
 3. An `fsm` (`fsm.exe` or `fsm.cmd` on Windows) on the `PATH`, for example from `npm link` in a clone of FSM Editor for VS Code.
 
 Set the option to use a newer generator than the bundled one, your own build, or when the plugin was built without the generator for your platform.
+
+fsm-generator, for Jinja templates, is found the same way: Settings › Tools › FSM Editor › *fsm-generator executable*, then the bundled `generator/<platform>/fsm-generator` (`fsm-generator.exe` on Windows; templates in `generator/<platform>/templates`), then an `fsm-generator` on the `PATH`. Its archives for Windows, macOS and Linux are on [its GitHub Releases](https://github.com/vincedupuis/fsm-generator/releases).
 
 ## Templates and the code model
 

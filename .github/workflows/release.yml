@@ -11,6 +11,8 @@ on:
 env:
   # Release of FSM Editor for VS Code whose `fsm` code generator the plugin bundles.
   FSM_CLI_VERSION: 0.4.5
+  # Release of fsm-generator (github.com/vincedupuis/fsm-generator), which runs the Jinja templates, the plugin bundles.
+  FSM_GENERATOR_VERSION: 0.1.0
 
 jobs:
   release:
@@ -58,6 +60,24 @@ jobs:
             cp -R "$dir" "plugin/cli/$platform"
           done
           ls plugin/cli
+
+      - name: Fetch fsm-generator
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$FSM_GENERATOR_VERSION" -R vincedupuis/fsm-generator -p "fsm-generator-$FSM_GENERATOR_VERSION-*" -D "$RUNNER_TEMP/generator"
+          for archive in "$RUNNER_TEMP"/generator/*; do
+            case "$archive" in
+              *.zip) unzip -q "$archive" -d "$RUNNER_TEMP/generator" ;;
+              *.tar.gz) tar xzf "$archive" -C "$RUNNER_TEMP/generator" ;;
+            esac
+          done
+          for dir in "$RUNNER_TEMP"/generator/fsm-generator-$FSM_GENERATOR_VERSION-*/; do
+            platform=$(basename "$dir" | sed "s/^fsm-generator-$FSM_GENERATOR_VERSION-//")
+            mkdir -p plugin/generator
+            cp -R "$dir" "plugin/generator/$platform"
+          done
+          ls plugin/generator
 
       - name: Test
         run: ./gradlew :core:test :plugin:test

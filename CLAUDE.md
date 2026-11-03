@@ -1,6 +1,6 @@
 # FSM Editor for JetBrains IDEs
 
-IntelliJ Platform plugin (2024.3+, all JetBrains IDEs with XML support): a visual editor for UML 2.5.1 state machines. `*.fsm` files are XMI 2.5.1 documents holding the UML model plus a UML DI diagram with the layout. It is the JetBrains edition of FSM Editor for VS Code (`../fsm-editor-vscode`) and FSM Editor for Visual Studio (`../fsm-editor-vs`): same concepts, file format, rules and messages, reimplemented in Kotlin (a port of the Visual Studio edition's C# Core; no JavaScript is reused). Code generation runs the VS Code project's `fsm` CLI.
+IntelliJ Platform plugin (2024.3+, all JetBrains IDEs with XML support): a visual editor for UML 2.5.1 state machines. `*.fsm` files are XMI 2.5.1 documents holding the UML model plus a UML DI diagram with the layout. It is the JetBrains edition of FSM Editor for VS Code (`../fsm-editor-vscode`) and FSM Editor for Visual Studio (`../fsm-editor-vs`): same concepts, file format, rules and messages, reimplemented in Kotlin (a port of the Visual Studio edition's C# Core; no JavaScript is reused). Code generation runs the VS Code project's `fsm` CLI, or fsm-generator for Jinja templates.
 
 ## Commands
 
@@ -23,7 +23,7 @@ scripts/fetch-cli.sh [--all]  # copy the fsm CLI + templates into plugin/cli/<pl
   - `editor/`: Swing built in code. `DiagramCanvas` paints with Java2D and hit-tests geometrically; `PropertiesPanel` rebuilds itself per selection; `Theme` maps IDE/editor-scheme colors; `ToolIcons` draws the toolbox icons.
   - Copy/Cut/Paste/Delete come from the IDE actions through `DiagramCanvas.uiDataSnapshot` (only while the canvas has the focus); other keys are handled by the canvas.
   - `services/FsmAnnotator` reports validation on the `xmi:id` of each element in the Text tab and the Problems view; `FsmResources` makes the XML support ignore the XMI/UML namespaces.
-  - `codegen/FsmCli.kt` runs `fsm <file> --template <hbs> --out <dir>`, parses `wrote …` lines and `file:line: severity: message` problems. `CodeGeneration.generate` is the whole flow; output goes to the FSM Code Generation tool window.
+  - `codegen/FsmCli.kt` runs `fsm <file> --template <hbs> --out <dir>`, or `fsm-generator` (`../fsm-generator`, same arguments and output) for a `.jinja` template, and parses `wrote …` lines and `file:line: severity: message` problems. The release workflow bundles fsm-generator in `plugin/generator/<platform>/` (pinned by `FSM_GENERATOR_VERSION`). `CodeGeneration.generate` is the whole flow; output goes to the FSM Code Generation tool window.
 
 ## Project rules
 

@@ -21,6 +21,8 @@ class FsmSettings : PersistentStateComponent<FsmSettings.Options> {
     class Options {
         /** Path of the fsm code generator; empty to use the bundled one, or else one on the PATH. */
         var cliPath: String = ""
+        /** Path of fsm-generator, which runs Jinja templates; empty to use the bundled one, or else one on the PATH. */
+        var generatorPath: String = ""
         /** The generator reads the files on disk: save open state machines first. */
         var saveBeforeGenerating: Boolean = true
         /** Last template used to generate code. */
@@ -47,6 +49,7 @@ class FsmSettings : PersistentStateComponent<FsmSettings.Options> {
 
 class FsmConfigurable : Configurable {
     private var cliPath: TextFieldWithBrowseButton? = null
+    private var generatorPath: TextFieldWithBrowseButton? = null
     private var saveFirst: JBCheckBox? = null
 
     override fun getDisplayName() = "FSM Editor"
@@ -56,14 +59,25 @@ class FsmConfigurable : Configurable {
         path.addActionListener {
             FileChooser.chooseFile(FileChooserDescriptor(true, false, false, false, false, false), null, null) { path.text = it.path }
         }
+        val generator = TextFieldWithBrowseButton()
+        generator.addActionListener {
+            FileChooser.chooseFile(FileChooserDescriptor(true, false, false, false, false, false), null, null) { generator.text = it.path }
+        }
         val save = JBCheckBox("Save .fsm documents before generating code")
         cliPath = path
+        generatorPath = generator
         saveFirst = save
         return FormBuilder.createFormBuilder()
             .addLabeledComponent("fsm executable:", path)
             .addComponentToRightColumn(
                 com.intellij.ui.components.JBLabel(
                     "<html>Path of the fsm code generator. Leave empty to use the one bundled with the plugin, or else an fsm found on the PATH.</html>",
+                ).apply { foreground = UIUtil.getContextHelpForeground() },
+            )
+            .addLabeledComponent("fsm-generator executable:", generator)
+            .addComponentToRightColumn(
+                com.intellij.ui.components.JBLabel(
+                    "<html>Path of fsm-generator, the code generator that runs Jinja templates (.jinja). Leave empty to use the one bundled with the plugin, or else an fsm-generator found on the PATH.</html>",
                 ).apply { foreground = UIUtil.getContextHelpForeground() },
             )
             .addComponent(save)
@@ -77,23 +91,26 @@ class FsmConfigurable : Configurable {
 
     override fun isModified(): Boolean {
         val o = FsmSettings.getInstance().state
-        return cliPath?.text != o.cliPath || saveFirst?.isSelected != o.saveBeforeGenerating
+        return cliPath?.text != o.cliPath || generatorPath?.text != o.generatorPath || saveFirst?.isSelected != o.saveBeforeGenerating
     }
 
     override fun apply() {
         val o = FsmSettings.getInstance().state
         o.cliPath = cliPath?.text?.trim() ?: ""
+        o.generatorPath = generatorPath?.text?.trim() ?: ""
         o.saveBeforeGenerating = saveFirst?.isSelected ?: true
     }
 
     override fun reset() {
         val o = FsmSettings.getInstance().state
         cliPath?.text = o.cliPath
+        generatorPath?.text = o.generatorPath
         saveFirst?.isSelected = o.saveBeforeGenerating
     }
 
     override fun disposeUIResources() {
         cliPath = null
+        generatorPath = null
         saveFirst = null
     }
 }
