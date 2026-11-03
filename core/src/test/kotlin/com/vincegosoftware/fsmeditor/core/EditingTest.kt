@@ -137,6 +137,23 @@ class EditingTest {
     }
 
     @Test
+    fun stateActivitiesWrapToTheStateWidth() {
+        val s = newSession()
+        val v = s.index.vertex("v_idle")!!
+        v.entry = "startTheVeryLongRunningActivity(); andThenSomethingElse(); andFinallyCleanUp()"
+        v.w = 300.0
+        val wide = Geometry.activityRows(s.model, v)
+        val wideHeight = Geometry.headerHeight(s.model, v)
+        v.w = 120.0
+        val narrow = Geometry.activityRows(s.model, v)
+        assertTrue(narrow.size > wide.size)
+        assertTrue(Geometry.headerHeight(s.model, v) > wideHeight)
+        assertTrue(narrow.all { Geometry.estimateLabelWidth(it) <= 120.0 - 16 || !it.contains(' ') })
+        assertEquals(narrow.size * Geometry.LINE_HEIGHT + 6 + Geometry.NAME_HEIGHT, Geometry.headerHeight(s.model, v))
+        assertTrue(s.minimumSize(v).second >= Geometry.headerHeight(s.model, v))
+    }
+
+    @Test
     fun addAllReferencesUsesTheSubmachinePoints() {
         val s = newSession()
         val sub = s.createVertex("submachine", PointD(400.0, 300.0))!!

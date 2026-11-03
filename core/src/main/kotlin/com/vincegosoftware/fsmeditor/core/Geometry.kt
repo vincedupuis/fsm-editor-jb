@@ -21,7 +21,8 @@ class RegionRect(val id: String, val name: String, val rect: RectD)
 
 enum class TextAnchor { Start, Middle, End }
 
-class LabelPlacement(val x: Double, val y: Double, val anchor: TextAnchor)
+/** [up]: the label sits above the line, so a stacked label grows upward. */
+class LabelPlacement(val x: Double, val y: Double, val anchor: TextAnchor, val up: Boolean)
 
 /** Point halfway along a polyline, with the direction of the segment it is on. */
 class PolylineMidpoint(val point: PointD, val dx: Double, val dy: Double)
@@ -39,18 +40,29 @@ object Geometry {
 
     fun clamp(n: Double, min: Double, max: Double): Double = max(min, min(max, n))
 
+    /**
+     * Measures text for wrapping a state's internal activities. The estimate by default; the editor's
+     * canvas sets it to the real font metrics. The XMI writer always uses the estimate, so its output
+     * doesn't depend on the font.
+     */
+    var textMeasure: (String) -> Double = ::estimateLabelWidth
+
+    /** The internal activities of a state as drawn: each line wrapped to the width of the state. */
+    fun activityRows(model: FsmModel, v: Vertex, measure: (String) -> Double = textMeasure): List<String> =
+        Labels.activityLines(model, v).flatMap { commentLines(it, v.w - 16, measure) }
+
     /** Height of the name compartment plus the internal activities compartment. */
-    fun headerHeight(model: FsmModel, v: Vertex): Double {
+    fun headerHeight(model: FsmModel, v: Vertex, measure: (String) -> Double = textMeasure): Double {
         var h = NAME_HEIGHT + (if (v.stereotype.isNotEmpty()) 12 else 0)
-        val n = Labels.activityLines(model, v).size
+        val n = activityRows(model, v, measure).size
         if (n > 0) h += n * LINE_HEIGHT + 6
         return h
     }
 
-    fun regionRects(model: FsmModel, v: Vertex): List<RegionRect> {
+    fun regionRects(model: FsmModel, v: Vertex, measure: (String) -> Double = textMeasure): List<RegionRect> {
         val regs = v.regions
         if (regs.isEmpty()) return emptyList()
-        val top = v.y + min(headerHeight(model, v), v.h - 20)
+        val top = v.y + min(headerHeight(model, v, measure), v.h - 20)
         val bh = v.y + v.h - top
         val n = regs.size
         val horizontal = v.regionLayout == RegionLayout.Horizontal
@@ -205,8 +217,15 @@ object Geometry {
             m.x + nx * 6 + off.x,
             m.y + ny * 6 + off.y + (if (ny < -0.5) -2 else 4),
             anchor,
+            ny < -0.5,
         )
     }
+
+    const val LABEL_LINE_HEIGHT = 13.0
+
+    /** Baseline of line [i] of a label of [count] stacked lines. */
+    fun labelLineY(lp: LabelPlacement, i: Int, count: Int): Double =
+        lp.y + (i - (if (lp.up) count - 1 else 0)) * LABEL_LINE_HEIGHT
 
     fun distToSegment(p: PointD, a: PointD, b: PointD): Double {
         val dx = b.x - a.x
@@ -269,17 +288,17 @@ object Geometry {
         for (t in model.transitions) {
             val pts = route(ix, t) ?: continue
             for (p in pts) add(p.x, p.y)
-            val label = Labels.transitionLabel(model, t)
-            if (label.isNotEmpty()) {
+            val lines = Labels.transitionLabelLines(model, t)
+            if (lines.isNotEmpty()) {
                 val lp = labelPos(t, pts)
-                val w = labelWidth(label)
+                val w = lines.maxOf(labelWidth)
                 val x0 = when (lp.anchor) {
                     TextAnchor.End -> lp.x - w
                     TextAnchor.Start -> lp.x
                     TextAnchor.Middle -> lp.x - w / 2
                 }
-                add(x0, lp.y - 12)
-                add(x0 + w, lp.y + 4)
+                add(x0, labelLineY(lp, 0, lines.size) - 12)
+                add(x0 + w, labelLineY(lp, lines.size - 1, lines.size) + 4)
             }
         }
         return RectD(x1, y1, x2 - x1, y2 - y1)

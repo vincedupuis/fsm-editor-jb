@@ -80,7 +80,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
         when (v.type) {
             VertexType.State -> {
                 sb.append("<rect class=\"shape\" x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\" rx=\"10\"/>")
-                val lines = Labels.activityLines(model, v)
+                val lines = Geometry.activityRows(model, v)
                 val regions = Geometry.regionRects(model, v)
                 val title = v.name + if (v.submachine.isNotEmpty()) " : " + session.machineLabel(v.submachine) else ""
                 val centered = regions.isEmpty() && lines.isEmpty()
@@ -185,15 +185,16 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
         val b = pts[pts.size - 1]
         val (p1, p2) = arrowHead(pts[pts.size - 2], b)
         sb.append("<path class=\"arrow\" d=\"M${f1(p1.x)},${f1(p1.y)} L${f1(b.x)},${f1(b.y)} L${f1(p2.x)},${f1(p2.y)}\"/>")
-        val label = Labels.transitionLabel(model, t)
-        if (label.isNotEmpty()) {
+        val lines = Labels.transitionLabelLines(model, t)
+        if (lines.isNotEmpty()) {
             val lp = Geometry.labelPos(t, pts)
             val anchor = when (lp.anchor) {
                 TextAnchor.End -> "end"
                 TextAnchor.Start -> "start"
                 TextAnchor.Middle -> "middle"
             }
-            sb.append("<text class=\"tlabel\" x=\"${f1(lp.x)}\" y=\"${f1(lp.y)}\" text-anchor=\"$anchor\">${esc(label)}</text>")
+            sb.append("<text class=\"tlabel\" x=\"${f1(lp.x)}\" y=\"${f1(Geometry.labelLineY(lp, 0, lines.size))}\" text-anchor=\"$anchor\">" +
+                lines.withIndex().joinToString("") { (i, l) -> "<tspan x=\"${f1(lp.x)}\" dy=\"${if (i > 0) f1(Geometry.LABEL_LINE_HEIGHT) else "0"}\">${esc(l)}</tspan>" } + "</text>")
         }
         sb.append("</g>")
     }

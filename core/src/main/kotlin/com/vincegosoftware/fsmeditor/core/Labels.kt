@@ -18,6 +18,21 @@ object Labels {
         return s.trim()
     }
 
+    /** The label as stacked lines: events, `[guard]`, `/ effect` (protocol: `[pre]`, event, `/ [post]`). */
+    fun transitionLabelLines(model: FsmModel, t: Transition): List<String> {
+        val trig = t.triggers.joinToString(", ")
+        val lines = if (model.kind == MachineKind.Protocol) {
+            listOf(
+                if (t.precondition.isNotEmpty()) "[${t.precondition}]" else "",
+                trig,
+                if (t.postcondition.isNotEmpty()) "/ [${t.postcondition}]" else "",
+            )
+        } else {
+            listOf(trig, if (t.guard.isNotEmpty()) "[${t.guard}]" else "", if (t.effect.isNotEmpty()) "/ ${t.effect}" else "")
+        }
+        return lines.filter { it.isNotEmpty() }
+    }
+
     /** May transitions leaving [source] use the [else] guard? */
     fun allowsElse(source: Vertex?): Boolean =
         source != null && (source.type == VertexType.Choice || source.type == VertexType.Junction)

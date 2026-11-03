@@ -245,7 +245,7 @@ object Xmi {
         for (v in m.vertices) {
             shapes.add(XNode("ownedElement", "xmi:type" to "umldi:UMLShape", "xmi:id" to "di_" + v.id, "modelElement" to v.id).add(bounds(v.x, v.y, v.w, v.h)))
             if (v.type == VertexType.State) {
-                for (rb in Geometry.regionRects(m, v)) {
+                for (rb in Geometry.regionRects(m, v, Geometry::estimateLabelWidth)) {
                     shapes.add(
                         XNode("ownedElement", "xmi:type" to "umldi:UMLShape", "xmi:id" to "di_" + rb.id, "modelElement" to rb.id)
                             .add(bounds(rb.rect.x, rb.rect.y, rb.rect.w, rb.rect.h)),

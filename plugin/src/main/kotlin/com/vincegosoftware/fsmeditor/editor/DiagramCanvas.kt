@@ -85,6 +85,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         private set
 
     init {
+        Geo.textMeasure = ::labelWidth
         isFocusable = true
         isOpaque = true
         val mouse = Mouse()
@@ -342,7 +343,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         when (v.type) {
             VertexType.State -> {
                 outline(RoundRectangle2D.Double(x, y, w, h, 20.0, 20.0))
-                val lines = Labels.activityLines(s.model, v)
+                val lines = Geo.activityRows(s.model, v)
                 val regions = Geo.regionRects(s.model, v)
                 val title = v.name + if (v.submachine.isNotEmpty()) " : " + s.machineLabel(v.submachine) else ""
                 val centered = regions.isEmpty() && lines.isEmpty()
@@ -484,10 +485,14 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         arrow.lineTo(b.x, b.y)
         arrow.lineTo(p2.x, p2.y)
         g.draw(arrow)
-        val label = Labels.transitionLabel(s.model, t)
-        if (label.isNotEmpty()) {
+        val lines = Labels.transitionLabelLines(s.model, t)
+        if (lines.isNotEmpty()) {
             val lp = Geo.labelPos(t, pts)
-            val box = drawText(g, lp.x, lp.y, label, 11.0, if (selected) th.accent else th.foreground, lp.anchor, halo = th.background)
+            var box: Rectangle2D? = null
+            for ((i, line) in lines.withIndex()) {
+                val b = drawText(g, lp.x, Geo.labelLineY(lp, i, lines.size), line, 11.0, if (selected) th.accent else th.foreground, lp.anchor, halo = th.background) ?: continue
+                box = box?.createUnion(b) ?: b
+            }
             if (box != null) labels.add(box to t.id)
         }
         if (selected && s.selection.size == 1) {
@@ -819,8 +824,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
                 DragKind.Resize -> {
                     val v = d.vertex!!
-                    val (minW, minH) = s.minimumSize(v)
+                    val minW = s.minimumSize(v).first
                     v.w = max(minW, if (e.isAltDown) d.w0 + p.x - d.start.x else Geo.snap(v.x + d.w0 + p.x - d.start.x) - v.x)
+                    val minH = s.minimumSize(v).second // wrapped text depends on the new width
                     v.h = max(minH, if (e.isAltDown) d.h0 + p.y - d.start.y else Geo.snap(v.y + d.h0 + p.y - d.start.y) - v.y)
                     s.keepPointsOnBorder(v)
                 }
