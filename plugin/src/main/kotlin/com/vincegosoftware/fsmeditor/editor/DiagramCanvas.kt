@@ -522,13 +522,15 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         if (sel.size == 1 && s.selection.size == 1) {
             val v = sel[0]
             if (v.type in RESIZABLE) {
-                val rh = resizeHandle(v)
-                val shape = RoundRectangle2D.Double(rh.x, rh.y, rh.w, rh.h, 3.0, 3.0)
-                g.color = accent
-                g.fill(shape)
-                g.stroke = th.stroke(1.0)
-                g.color = th.background
-                g.draw(shape)
+                for (corner in CORNERS) {
+                    val rh = resizeHandle(v, corner)
+                    val shape = RoundRectangle2D.Double(rh.x, rh.y, rh.w, rh.h, 3.0, 3.0)
+                    g.color = accent
+                    g.fill(shape)
+                    g.stroke = th.stroke(1.0)
+                    g.color = th.background
+                    g.draw(shape)
+                }
             }
             if (v.type != VertexType.Final && v.type != VertexType.Terminate) {
                 val c = connectHandle(v)
@@ -563,7 +565,8 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         }
     }
 
-    private fun resizeHandle(v: Vertex) = RectD(v.x + v.w - 1, v.y + v.h - 1, 9.0, 9.0)
+    private fun resizeHandle(v: Vertex, corner: String) =
+        RectD(if ('w' in corner) v.x - 8 else v.x + v.w - 1, if ('n' in corner) v.y - 8 else v.y + v.h - 1, 9.0, 9.0)
 
     private fun connectHandle(v: Vertex) = PointD(v.x + v.w + 18, v.y + v.h / 2)
 
@@ -583,9 +586,13 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 if (only.type != VertexType.Final && only.type != VertexType.Terminate && Geo.dist(p, c) <= 7 + tolerance) {
                     return Hit(HitKind.Handle, handle = "connect")
                 }
-                val rh = resizeHandle(only)
-                if (only.type in RESIZABLE && RectD(rh.x - tolerance, rh.y - tolerance, rh.w + tolerance * 2, rh.h + tolerance * 2).contains(p)) {
-                    return Hit(HitKind.Handle, handle = "resize")
+                if (only.type in RESIZABLE) {
+                    for (corner in CORNERS) {
+                        val rh = resizeHandle(only, corner)
+                        if (RectD(rh.x - tolerance, rh.y - tolerance, rh.w + tolerance * 2, rh.h + tolerance * 2).contains(p)) {
+                            return Hit(HitKind.Handle, handle = "resize-$corner")
+                        }
+                    }
                 }
             }
             val selected = ix.transition(s.selection.first())
@@ -664,6 +671,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         var dropRegion: String? = null
         var dropState: String? = null
         var vertex: Vertex? = null
+        var corner = "se"
+        var x0 = 0.0
+        var y0 = 0.0
         var w0 = 0.0
         var h0 = 0.0
         var source: Vertex? = null
@@ -733,10 +743,13 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 HitKind.Handle -> {
                     val v = s.index.vertex(s.selection.first())
                     if (v != null) {
-                        if (hit.handle == "resize") {
+                        if (hit.handle.startsWith("resize-")) {
                             drag = DragState(DragKind.Resize).also {
+                                it.corner = hit.handle.removePrefix("resize-")
                                 it.vertex = v
                                 it.start = p
+                                it.x0 = v.x
+                                it.y0 = v.y
                                 it.w0 = v.w
                                 it.h0 = v.h
                             }
@@ -824,10 +837,28 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
                 DragKind.Resize -> {
                     val v = d.vertex!!
+                    val west = 'w' in d.corner
+                    val north = 'n' in d.corner
+                    val dx = p.x - d.start.x
+                    val dy = p.y - d.start.y
                     val minW = s.minimumSize(v).first
-                    v.w = max(minW, if (e.isAltDown) d.w0 + p.x - d.start.x else Geo.snap(v.x + d.w0 + p.x - d.start.x) - v.x)
+                    if (west) {
+                        // The right edge stays put.
+                        val right = d.x0 + d.w0
+                        v.x = min(right - minW, if (e.isAltDown) d.x0 + dx else Geo.snap(d.x0 + dx))
+                        v.w = right - v.x
+                    } else {
+                        v.w = max(minW, if (e.isAltDown) d.w0 + dx else Geo.snap(v.x + d.w0 + dx) - v.x)
+                    }
                     val minH = s.minimumSize(v).second // wrapped text depends on the new width
-                    v.h = max(minH, if (e.isAltDown) d.h0 + p.y - d.start.y else Geo.snap(v.y + d.h0 + p.y - d.start.y) - v.y)
+                    if (north) {
+                        // The bottom edge stays put.
+                        val bottom = d.y0 + d.h0
+                        v.y = min(bottom - minH, if (e.isAltDown) d.y0 + dy else Geo.snap(d.y0 + dy))
+                        v.h = bottom - v.y
+                    } else {
+                        v.h = max(minH, if (e.isAltDown) d.h0 + dy else Geo.snap(v.y + d.h0 + dy) - v.y)
+                    }
                     s.keepPointsOnBorder(v)
                 }
                 DragKind.Connect -> {
@@ -953,7 +984,13 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         }
         val hit = hitTest(s, p)
         cursor = when (hit.kind) {
-            HitKind.Handle -> Cursor.getPredefinedCursor(if (hit.handle == "resize") Cursor.SE_RESIZE_CURSOR else Cursor.CROSSHAIR_CURSOR)
+            HitKind.Handle -> Cursor.getPredefinedCursor(when (hit.handle) {
+                "resize-nw" -> Cursor.NW_RESIZE_CURSOR
+                "resize-ne" -> Cursor.NE_RESIZE_CURSOR
+                "resize-sw" -> Cursor.SW_RESIZE_CURSOR
+                "resize-se" -> Cursor.SE_RESIZE_CURSOR
+                else -> Cursor.CROSSHAIR_CURSOR
+            })
             HitKind.Waypoint, HitKind.Label -> Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
             else -> null
         }
@@ -1099,6 +1136,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         /** Prefix of the text a toolbox item drags onto the canvas. */
         const val TOOL_PREFIX = "fsm-editor-tool:"
 
+        private val CORNERS = listOf("nw", "ne", "sw", "se")
         private val RESIZABLE = setOf(VertexType.State, VertexType.Comment, VertexType.Fork, VertexType.Join)
     }
 }
