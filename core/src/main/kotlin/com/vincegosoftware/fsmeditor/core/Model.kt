@@ -116,13 +116,17 @@ data class PointD(val x: Double, val y: Double) {
 }
 
 /**
- * Diagram colors (`#rrggbb`): an element's own `color`, and per item of its
- * text in `itemColors`, keyed by [ITEM_KEYS].
+ * Diagram colors (`#rrggbb`): an element's own `color`, and per item in
+ * `itemColors`, keyed by [ITEM_KEYS].
  */
 object ElementColors {
-    /** Items of a state or transition that can have their own color, in file order. */
+    /**
+     * Items of a state or transition that can have their own color, in file order:
+     * `background` is the fill of a composite state's regions (its own color tints
+     * only the header then), the others are items of the text.
+     */
     val ITEM_KEYS = listOf(
-        "entry", "exit", "doActivity", "deferrable", "invariant",
+        "background", "entry", "exit", "doActivity", "deferrable", "invariant",
         "triggers", "guard", "effect", "precondition", "postcondition",
     )
 
@@ -140,6 +144,9 @@ object ElementColors {
 
     /** The element's own color, or null. */
     fun of(own: String?): String? = if (isColor(own)) own else null
+
+    /** The background color of a composite state's regions, or null (it doesn't fall back to the state's own color). */
+    fun background(items: Map<String, String>): String? = of(items["background"])
 
     /** The color of one item: its own, else the element's, else null. */
     fun item(own: String, items: Map<String, String>, key: String): String? = of(items[key]) ?: of(own)

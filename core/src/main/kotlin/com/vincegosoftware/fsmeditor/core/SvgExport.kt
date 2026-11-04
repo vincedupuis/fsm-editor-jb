@@ -31,6 +31,9 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
 .line,.arrow{fill:none;stroke:#333;stroke-width:1.3;stroke-linejoin:round}
 .tlabel{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}"""
 
+    /** Fill of a state (`.shape` in the style sheet). */
+    private const val STATE_FILL = "#fdfdfd"
+
     fun export(session: DiagramSession): String {
         session.reindex()
         val ix = session.index
@@ -48,7 +51,8 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
         sb.append("<style>$CSS</style>\n")
         sb.append("<rect x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\" fill=\"#fff\"/>\n")
         val sorted = Geometry.drawingOrder(ix)
-        for (v in sorted) vertexShape(sb, session, v)
+        var fills = 0
+        for (v in sorted) vertexShape(sb, session, v) { ++fills }
         for (v in sorted.filter { it.type == VertexType.Comment }) anchors(sb, ix, v)
         for (t in model.transitions) transitionShape(sb, ix, model, t)
         sb.append("\n</svg>\n")
@@ -73,7 +77,8 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
     private fun cross(cx: Double, cy: Double, k: Double, style: String) =
         "<path class=\"stroke\" d=\"M${f(cx - k)},${f(cy - k)} L${f(cx + k)},${f(cy + k)} M${f(cx + k)},${f(cy - k)} L${f(cx - k)},${f(cy + k)}\"$style/>"
 
-    private fun vertexShape(sb: StringBuilder, session: DiagramSession, v: Vertex) {
+    /** Draws a vertex; [nextFill] numbers the fill gradients of composite states. */
+    private fun vertexShape(sb: StringBuilder, session: DiagramSession, v: Vertex, nextFill: () -> Int) {
         val model = session.model
         val x = v.x
         val y = v.y
@@ -90,9 +95,23 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
         val sepSt = if (c == null) "" else style("stroke:$c")
         when (v.type) {
             VertexType.State -> {
-                sb.append("<rect class=\"shape\" x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\" rx=\"10\"$shapeSt/>")
                 val lines = Geometry.activityRowItems(model, v)
                 val regions = Geometry.regionRects(model, v)
+                var st = shapeSt
+                if (regions.isNotEmpty()) {
+                    // Composite state: its color tints the header, its background color the regions.
+                    val bg = ElementColors.background(v.itemColors)
+                    val head = if (c != null) ElementColors.tint(c) else STATE_FILL
+                    val body = if (bg != null) ElementColors.tint(bg) else STATE_FILL
+                    if (head != body) {
+                        val id = "fsm-fill-${nextFill()}"
+                        val at = f(Num.round((regions[0].rect.y - y) / h * 10000) / 10000)
+                        sb.append("<defs><linearGradient id=\"$id\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">")
+                        sb.append("<stop offset=\"$at\" style=\"stop-color:$head\"/><stop offset=\"$at\" style=\"stop-color:$body\"/></linearGradient></defs>")
+                        st = style("fill:url(#$id)", c?.let { "stroke:$it" })
+                    }
+                }
+                sb.append("<rect class=\"shape\" x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\" rx=\"10\"$st/>")
                 val title = v.name + if (v.submachine.isNotEmpty()) " : " + session.machineLabel(v.submachine) else ""
                 val centered = regions.isEmpty() && lines.isEmpty()
                 var ty = y + 16

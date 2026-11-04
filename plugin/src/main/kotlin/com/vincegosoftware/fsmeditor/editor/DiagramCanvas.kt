@@ -345,9 +345,31 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val sepColor = th.alpha(own ?: th.line, 0.8)
         when (v.type) {
             VertexType.State -> {
-                outline(RoundRectangle2D.Double(x, y, w, h, 20.0, 20.0))
                 val lines = Geo.activityRowItems(s.model, v)
                 val regions = Geo.regionRects(s.model, v)
+                val box = RoundRectangle2D.Double(x, y, w, h, 20.0, 20.0)
+                if (regions.isNotEmpty()) {
+                    // Composite state: its color tints the header, its background color the regions.
+                    val head = if (own != null) th.tint(own, th.stateFill) else th.stateFill
+                    val bg = Theme.colorOf(ElementColors.background(v.itemColors))
+                    val body = if (bg != null) th.tint(bg, th.stateFill) else th.stateFill
+                    g.color = head
+                    g.fill(box)
+                    if (body != head) {
+                        val top = regions[0].rect.y
+                        val g2 = g.create() as Graphics2D
+                        try {
+                            g2.clip(Rectangle2D.Double(x, top, w, max(0.0, y + h - top)))
+                            g2.color = body
+                            g2.fill(box)
+                        } finally {
+                            g2.dispose()
+                        }
+                    }
+                    outline(box, filled = false)
+                } else {
+                    outline(box)
+                }
                 val title = v.name + if (v.submachine.isNotEmpty()) " : " + s.machineLabel(v.submachine) else ""
                 val centered = regions.isEmpty() && lines.isEmpty()
                 val stereo = v.stereotype.isNotEmpty()

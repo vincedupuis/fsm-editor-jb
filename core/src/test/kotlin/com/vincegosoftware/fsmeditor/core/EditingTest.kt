@@ -5,6 +5,7 @@ import java.nio.file.Paths
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -123,6 +124,28 @@ class EditingTest {
         assertEquals("", data.transitions[0].color)
         assertEquals("#0090ff", data.transitions[0].itemColors["guard"])
         assertTrue("\"color\":\"#e5484d\",\"itemColors\":{\"entry\":\"#30a46c\"}" in ClipboardJson.write(data))
+    }
+
+    @Test
+    fun splitsTheFillOfACompositeState() {
+        val s = example("MediaPlayer.fsm")
+        val v = s.model.vertices.first { it.type == VertexType.State && it.regions.isNotEmpty() }
+        assertFalse("linearGradient" in SvgExport.export(s))
+        // The title color tints the header only.
+        s.setColor(v, null, "#0090ff")
+        val svg = SvgExport.export(s)
+        assertTrue("style=\"stop-color:#d5ecfd\"/><stop offset=" in svg)
+        assertTrue("style=\"stop-color:#fdfdfd\"/></linearGradient>" in svg)
+        assertTrue("fill:url(#fsm-fill-1);stroke:#0090ff" in svg)
+        // The background color tints the regions.
+        s.setColor(v, "background", "#30a46c")
+        assertTrue("style=\"stop-color:#dcefe6\"/></linearGradient>" in SvgExport.export(s))
+        val back = Xmi.fromXmi(Xmi.toXmi(s.model)).vertices.first { it.id == v.id }
+        assertEquals("#0090ff", back.color)
+        assertEquals("#30a46c", back.itemColors["background"])
+        // One color for both is a plain fill.
+        s.setColor(v, "background", "#0090ff")
+        assertFalse("linearGradient" in SvgExport.export(s))
     }
 
     @Test

@@ -412,17 +412,18 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
     }
 
     /** The "Color" row of an element. */
-    private fun colorField(value: String, onChange: (String?) -> Unit, what: String): JComponent {
+    /** The "Color" row of an element, or another color row named [name]. */
+    private fun colorField(value: String, onChange: (String?) -> Unit, what: String, name: String = "Color"): JComponent {
         val row = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
             isOpaque = false
             border = JBUI.Borders.emptyBottom(8)
         }
-        row.add(JBLabel("Color").apply {
+        row.add(JBLabel(name).apply {
             font = JBFont.small()
             foreground = UIUtil.getContextHelpForeground()
-            preferredSize = Dimension(JBUI.scale(40), preferredSize.height)
+            preferredSize = Dimension(maxOf(JBUI.scale(if (name == "Color") 40 else 104), preferredSize.width), preferredSize.height)
         })
-        row.add(colorButton(value, onChange, "Color of $what"))
+        row.add(colorButton(value, onChange, "$name of $what"))
         row.add(JBLabel(ElementColors.of(value) ?: "Default").apply {
             font = JBFont.small()
             foreground = UIUtil.getContextHelpForeground()
@@ -536,7 +537,14 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             }
             else -> put(textField("Name", v.name, { v.name = it.trim(); commit() }))
         }
-        put(colorField(v.color, { s.setColor(v, null, it); render() }, if (v.type == VertexType.Comment) "the comment" else v.name.ifEmpty { "the element" }))
+        val what = if (v.type == VertexType.Comment) "the comment" else v.name.ifEmpty { "the element" }
+        if (v.type == VertexType.State && v.regions.isNotEmpty()) {
+            // A composite state has a color for its header and one for its regions.
+            put(colorField(v.color, { s.setColor(v, null, it); render() }, what, "Title color"))
+            put(colorField(v.itemColors["background"] ?: "", { s.setColor(v, "background", it); render() }, what, "Background color"))
+        } else {
+            put(colorField(v.color, { s.setColor(v, null, it); render() }, what))
+        }
 
         if (v.type == VertexType.State) stateProps(s, v)
 
