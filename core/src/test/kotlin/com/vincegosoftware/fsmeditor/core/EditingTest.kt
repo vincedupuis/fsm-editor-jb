@@ -109,15 +109,42 @@ class EditingTest {
 
     @Test
     fun readsClipboardTextOfTheOtherEditors() {
-        val text = "{\"fsmClipboard\":1,\"vertices\":[{\"id\":\"v_a\",\"type\":\"state\",\"name\":\"A\",\"parent\":\"r_root\",\"x\":10,\"y\":20,\"w\":140,\"h\":60,\"regions\":[],\"entry\":\"go()\"}," +
+        val text = "{\"fsmClipboard\":1,\"vertices\":[{\"id\":\"v_a\",\"type\":\"state\",\"name\":\"A\",\"parent\":\"r_root\",\"x\":10,\"y\":20,\"w\":140,\"h\":60,\"regions\":[],\"entry\":\"go()\",\"color\":\"#e5484d\",\"itemColors\":{\"entry\":\"#30a46c\",\"exit\":\"bad\"}}," +
             "{\"id\":\"v_b\",\"type\":\"shallowHistory\",\"name\":\"\",\"parent\":\"r_root\",\"x\":200,\"y\":20,\"w\":26,\"h\":26,\"regions\":[]}]," +
-            "\"transitions\":[{\"id\":\"t1\",\"source\":\"v_b\",\"target\":\"v_a\",\"kind\":\"external\",\"triggers\":[],\"guard\":\"\",\"effect\":\"\",\"points\":[{\"x\":1.5,\"y\":2}],\"labelOffset\":{\"x\":0,\"y\":-4}}]}"
+            "\"transitions\":[{\"id\":\"t1\",\"source\":\"v_b\",\"target\":\"v_a\",\"kind\":\"external\",\"triggers\":[],\"guard\":\"\",\"effect\":\"\",\"points\":[{\"x\":1.5,\"y\":2}],\"labelOffset\":{\"x\":0,\"y\":-4},\"itemColors\":{\"guard\":\"#0090ff\"}}]}"
         val data = ClipboardJson.tryRead(text)!!
         assertEquals(2, data.vertices.size)
         assertEquals(VertexType.ShallowHistory, data.vertices[1].type)
         assertEquals("go()", data.vertices[0].entry)
         assertEquals(PointD(1.5, 2.0), data.transitions[0].points[0])
         assertEquals(PointD(0.0, -4.0), data.transitions[0].labelOffset)
+        assertEquals("#e5484d", data.vertices[0].color)
+        assertEquals(mapOf("entry" to "#30a46c"), data.vertices[0].itemColors)
+        assertEquals("", data.transitions[0].color)
+        assertEquals("#0090ff", data.transitions[0].itemColors["guard"])
+        assertTrue("\"color\":\"#e5484d\",\"itemColors\":{\"entry\":\"#30a46c\"}" in ClipboardJson.write(data))
+    }
+
+    @Test
+    fun setsAndClearsColors() {
+        val s = example("MediaPlayer.fsm")
+        val v = s.model.vertices.first { it.type == VertexType.State }
+        val t = s.model.transitions[0]
+        s.setColor(v, null, "#e5484d")
+        s.setColor(v, "entry", "#30a46c")
+        s.setColor(t, "guard", "#0090ff")
+        s.setColor(t, null, "not a color")
+        val back = Xmi.fromXmi(Xmi.toXmi(s.model))
+        val bv = back.vertices.first { it.id == v.id }
+        assertEquals("#e5484d", bv.color)
+        assertEquals("#30a46c", bv.itemColors["entry"])
+        assertEquals("", back.transitions.first { it.id == t.id }.color)
+        assertEquals("#0090ff", back.transitions.first { it.id == t.id }.itemColors["guard"])
+        assertTrue("fill:#30a46c" in SvgExport.export(s))
+        s.setColor(v, "entry", null)
+        s.setColor(v, null, null)
+        assertEquals("", v.color)
+        assertTrue(v.itemColors.isEmpty())
     }
 
     @Test

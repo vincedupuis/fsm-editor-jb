@@ -61,11 +61,17 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
     private fun esc(s: String) =
         s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
 
-    private fun text(x: Double, y: Double, cls: String, text: String, anchor: String = "middle") =
-        "<text class=\"$cls\" x=\"${f1(x)}\" y=\"${f1(y)}\" text-anchor=\"$anchor\">${esc(text)}</text>"
+    private fun text(x: Double, y: Double, cls: String, text: String, anchor: String = "middle", color: String? = null) =
+        "<text class=\"$cls\" x=\"${f1(x)}\" y=\"${f1(y)}\" text-anchor=\"$anchor\"${style(color?.let { "fill:$it" })}>${esc(text)}</text>"
 
-    private fun cross(cx: Double, cy: Double, k: Double) =
-        "<path class=\"stroke\" d=\"M${f(cx - k)},${f(cy - k)} L${f(cx + k)},${f(cy + k)} M${f(cx + k)},${f(cy - k)} L${f(cx - k)},${f(cy + k)}\" style=\"stroke-width:1.3\"/>"
+    /** A style attribute with the given declarations (nulls skipped), or nothing. */
+    private fun style(vararg decls: String?): String {
+        val d = decls.filterNot { it.isNullOrEmpty() }.joinToString(";")
+        return if (d.isNotEmpty()) " style=\"$d\"" else ""
+    }
+
+    private fun cross(cx: Double, cy: Double, k: Double, style: String) =
+        "<path class=\"stroke\" d=\"M${f(cx - k)},${f(cy - k)} L${f(cx + k)},${f(cy + k)} M${f(cx + k)},${f(cy - k)} L${f(cx - k)},${f(cy + k)}\"$style/>"
 
     private fun vertexShape(sb: StringBuilder, session: DiagramSession, v: Vertex) {
         val model = session.model
@@ -77,93 +83,99 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
         val cy = y + h / 2
         val r = min(w, h) / 2
         sb.append("<g class=\"vertex v-${v.type.key}\">")
+        val c = ElementColors.of(v.color)
+        val shapeSt = if (c == null) "" else style("fill:" + ElementColors.tint(c), "stroke:$c")
+        val fillSt = if (c == null) "" else style("fill:$c")
+        fun strokeSt(width: String?) = style(c?.let { "stroke:$it" }, width?.let { "stroke-width:$it" })
+        val sepSt = if (c == null) "" else style("stroke:$c")
         when (v.type) {
             VertexType.State -> {
-                sb.append("<rect class=\"shape\" x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\" rx=\"10\"/>")
-                val lines = Geometry.activityRows(model, v)
+                sb.append("<rect class=\"shape\" x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\" rx=\"10\"$shapeSt/>")
+                val lines = Geometry.activityRowItems(model, v)
                 val regions = Geometry.regionRects(model, v)
                 val title = v.name + if (v.submachine.isNotEmpty()) " : " + session.machineLabel(v.submachine) else ""
                 val centered = regions.isEmpty() && lines.isEmpty()
                 var ty = y + 16
                 val stereo = v.stereotype.isNotEmpty()
                 if (stereo) {
-                    sb.append(text(cx, y + if (centered) h / 2 - 4 else 13.0, "stereo", "«${v.stereotype}»"))
+                    sb.append(text(cx, y + if (centered) h / 2 - 4 else 13.0, "stereo", "«${v.stereotype}»", "middle", c))
                     ty += 12
                 }
                 if (centered) {
-                    sb.append(text(cx, y + h / 2 + if (stereo) 10 else 4, "name", title))
+                    sb.append(text(cx, y + h / 2 + if (stereo) 10 else 4, "name", title, "middle", c))
                 } else {
-                    sb.append(text(cx, ty, "name", title))
+                    sb.append(text(cx, ty, "name", title, "middle", c))
                     var ly = y + Geometry.NAME_HEIGHT + if (stereo) 12 else 0
                     if (lines.isNotEmpty()) {
-                        sb.append("<line class=\"sep\" x1=\"${f(x)}\" y1=\"${f(ly)}\" x2=\"${f(x + w)}\" y2=\"${f(ly)}\"/>")
-                        for (l in lines) {
+                        sb.append("<line class=\"sep\" x1=\"${f(x)}\" y1=\"${f(ly)}\" x2=\"${f(x + w)}\" y2=\"${f(ly)}\"$sepSt/>")
+                        for ((l, lc) in lines) {
                             ly += Geometry.LINE_HEIGHT
-                            sb.append(text(x + 8, ly, "activity", l, "start"))
+                            sb.append(text(x + 8, ly, "activity", l, "start", lc))
                         }
                     }
                 }
                 if (regions.isNotEmpty()) {
                     val top = regions[0].rect.y
-                    sb.append("<line class=\"sep\" x1=\"${f(x)}\" y1=\"${f1(top)}\" x2=\"${f(x + w)}\" y2=\"${f1(top)}\"/>")
+                    sb.append("<line class=\"sep\" x1=\"${f(x)}\" y1=\"${f1(top)}\" x2=\"${f(x + w)}\" y2=\"${f1(top)}\"$sepSt/>")
                     for ((i, region) in regions.withIndex()) {
                         val rr = region.rect
                         if (i > 0) {
                             sb.append(
-                                if (v.regionLayout == RegionLayout.Horizontal) "<line class=\"sep dashed\" x1=\"${f1(rr.x)}\" y1=\"${f1(rr.y)}\" x2=\"${f1(rr.x)}\" y2=\"${f1(rr.y + rr.h)}\"/>"
-                                else "<line class=\"sep dashed\" x1=\"${f1(rr.x)}\" y1=\"${f1(rr.y)}\" x2=\"${f1(rr.x + rr.w)}\" y2=\"${f1(rr.y)}\"/>",
+                                if (v.regionLayout == RegionLayout.Horizontal) "<line class=\"sep dashed\" x1=\"${f1(rr.x)}\" y1=\"${f1(rr.y)}\" x2=\"${f1(rr.x)}\" y2=\"${f1(rr.y + rr.h)}\"$sepSt/>"
+                                else "<line class=\"sep dashed\" x1=\"${f1(rr.x)}\" y1=\"${f1(rr.y)}\" x2=\"${f1(rr.x + rr.w)}\" y2=\"${f1(rr.y)}\"$sepSt/>",
                             )
                         }
-                        if (region.name.isNotEmpty()) sb.append(text(rr.x + 6, rr.y + 12, "region-name", region.name, "start"))
+                        if (region.name.isNotEmpty()) sb.append(text(rr.x + 6, rr.y + 12, "region-name", region.name, "start", c))
                     }
                 }
                 if (v.submachine.isNotEmpty()) {
                     val gx = x + w - 26
                     val gy = y + h - 14
-                    sb.append("<rect class=\"stroke\" x=\"${f(gx)}\" y=\"${f(gy)}\" width=\"8\" height=\"6\" rx=\"2\" style=\"stroke-width:1.2\"/>")
-                    sb.append("<rect class=\"stroke\" x=\"${f(gx + 13)}\" y=\"${f(gy)}\" width=\"8\" height=\"6\" rx=\"2\" style=\"stroke-width:1.2\"/>")
-                    sb.append("<line class=\"stroke\" x1=\"${f(gx + 8)}\" y1=\"${f(gy + 3)}\" x2=\"${f(gx + 13)}\" y2=\"${f(gy + 3)}\" style=\"stroke-width:1.2\"/>")
+                    val glyphSt = strokeSt("1.2")
+                    sb.append("<rect class=\"stroke\" x=\"${f(gx)}\" y=\"${f(gy)}\" width=\"8\" height=\"6\" rx=\"2\"$glyphSt/>")
+                    sb.append("<rect class=\"stroke\" x=\"${f(gx + 13)}\" y=\"${f(gy)}\" width=\"8\" height=\"6\" rx=\"2\"$glyphSt/>")
+                    sb.append("<line class=\"stroke\" x1=\"${f(gx + 8)}\" y1=\"${f(gy + 3)}\" x2=\"${f(gx + 13)}\" y2=\"${f(gy + 3)}\"$glyphSt/>")
                 }
-                if (v.invariant.isNotEmpty()) sb.append(text(x + 4, y + h + 14, "invariant", "{${v.invariant}}", "start"))
+                if (v.invariant.isNotEmpty()) sb.append(text(x + 4, y + h + 14, "invariant", "{${v.invariant}}", "start", ElementColors.item(v.color, v.itemColors, "invariant")))
             }
             VertexType.Final ->
-                sb.append("<circle class=\"shape\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"/><circle class=\"fill\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(max(2.0, r - 5))}\"/>")
+                sb.append("<circle class=\"shape\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"$shapeSt/><circle class=\"fill\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(max(2.0, r - 5))}\"$fillSt/>")
             VertexType.Initial, VertexType.Junction ->
-                sb.append("<circle class=\"fill\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"/>")
+                sb.append("<circle class=\"fill\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"$fillSt/>")
             VertexType.ShallowHistory, VertexType.DeepHistory -> {
-                sb.append("<circle class=\"shape\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"/>")
-                sb.append(text(cx, cy + 4, "glyph", if (v.type == VertexType.DeepHistory) "H*" else "H"))
+                sb.append("<circle class=\"shape\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"$shapeSt/>")
+                sb.append(text(cx, cy + 4, "glyph", if (v.type == VertexType.DeepHistory) "H*" else "H", "middle", c))
             }
             VertexType.Choice ->
-                sb.append("<path class=\"shape\" d=\"M${f(cx)},${f(y)} L${f(x + w)},${f(cy)} L${f(cx)},${f(y + h)} L${f(x)},${f(cy)} Z\"/>")
+                sb.append("<path class=\"shape\" d=\"M${f(cx)},${f(y)} L${f(x + w)},${f(cy)} L${f(cx)},${f(y + h)} L${f(x)},${f(cy)} Z\"$shapeSt/>")
             VertexType.Fork, VertexType.Join ->
-                sb.append("<rect class=\"fill\" x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\" rx=\"1\"/>")
+                sb.append("<rect class=\"fill\" x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\" rx=\"1\"$fillSt/>")
             VertexType.ConnectionPointRef, VertexType.EntryPoint -> {
-                sb.append("<circle class=\"shape\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"/>")
-                if (v.type == VertexType.ConnectionPointRef && v.pointKind == PointKind.Exit) sb.append(cross(cx, cy, r * 0.62))
+                sb.append("<circle class=\"shape\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"$shapeSt/>")
+                if (v.type == VertexType.ConnectionPointRef && v.pointKind == PointKind.Exit) sb.append(cross(cx, cy, r * 0.62, strokeSt("1.3")))
             }
             VertexType.ExitPoint -> {
-                sb.append("<circle class=\"shape\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"/>")
-                sb.append(cross(cx, cy, r * 0.62))
+                sb.append("<circle class=\"shape\" cx=\"${f(cx)}\" cy=\"${f(cy)}\" r=\"${f(r)}\"$shapeSt/>")
+                sb.append(cross(cx, cy, r * 0.62, strokeSt("1.3")))
             }
             VertexType.Terminate -> {
                 sb.append("<rect class=\"hit\" x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\"/>")
-                sb.append("<path class=\"stroke\" d=\"M${f(x)},${f(y)} L${f(x + w)},${f(y + h)} M${f(x + w)},${f(y)} L${f(x)},${f(y + h)}\" style=\"stroke-width:2\"/>")
+                sb.append("<path class=\"stroke\" d=\"M${f(x)},${f(y)} L${f(x + w)},${f(y + h)} M${f(x + w)},${f(y)} L${f(x)},${f(y + h)}\"${strokeSt("2")}/>")
             }
             VertexType.Comment -> {
                 val fold = 12.0
-                sb.append("<path class=\"shape\" d=\"M${f(x)},${f(y)} H${f(x + w - fold)} L${f(x + w)},${f(y + fold)} V${f(y + h)} H${f(x)} Z\"/>")
-                sb.append("<path class=\"stroke\" d=\"M${f(x + w - fold)},${f(y)} V${f(y + fold)} H${f(x + w)}\" style=\"stroke-width:1\"/>")
+                sb.append("<path class=\"shape\" d=\"M${f(x)},${f(y)} H${f(x + w - fold)} L${f(x + w)},${f(y + fold)} V${f(y + h)} H${f(x)} Z\"$shapeSt/>")
+                sb.append("<path class=\"stroke\" d=\"M${f(x + w - fold)},${f(y)} V${f(y + fold)} H${f(x + w)}\"${strokeSt("1")}/>")
                 val lines = Geometry.commentLines(v.text, w - 16)
                 for ((i, line) in lines.withIndex()) {
-                    if (16 + i * 14 < h) sb.append(text(x + 8, y + 17 + i * 14, "", line, "start"))
+                    if (16 + i * 14 < h) sb.append(text(x + 8, y + 17 + i * 14, "", line, "start", c))
                 }
             }
         }
         val caption = if (v.type == VertexType.ConnectionPointRef) session.pointName(session.index.vertex(v.parent), v.ref).ifEmpty { "?" } else v.name
         if (caption.isNotEmpty() && v.type != VertexType.State && v.type != VertexType.Comment) {
             val below = if (v.type == VertexType.Fork || v.type == VertexType.Join) y + h + 13 else y + h + 12
-            sb.append(text(cx, below, "activity", caption))
+            sb.append(text(cx, below, "activity", caption, "middle", c))
         }
         sb.append("</g>")
     }
@@ -181,11 +193,13 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
         val pts = Geometry.route(ix, t) ?: return
         val d = "M" + pts.joinToString(" L") { "${f1(it.x)},${f1(it.y)}" }
         sb.append("<g class=\"transition\">")
-        sb.append("<path class=\"line\" d=\"$d\"/>")
+        val c = ElementColors.of(t.color)
+        val lineSt = if (c == null) "" else style("stroke:$c")
+        sb.append("<path class=\"line\" d=\"$d\"$lineSt/>")
         val b = pts[pts.size - 1]
         val (p1, p2) = arrowHead(pts[pts.size - 2], b)
-        sb.append("<path class=\"arrow\" d=\"M${f1(p1.x)},${f1(p1.y)} L${f1(b.x)},${f1(b.y)} L${f1(p2.x)},${f1(p2.y)}\"/>")
-        val lines = Labels.transitionLabelLines(model, t)
+        sb.append("<path class=\"arrow\" d=\"M${f1(p1.x)},${f1(p1.y)} L${f1(b.x)},${f1(b.y)} L${f1(p2.x)},${f1(p2.y)}\"$lineSt/>")
+        val lines = Labels.transitionLabelItems(model, t)
         if (lines.isNotEmpty()) {
             val lp = Geometry.labelPos(t, pts)
             val anchor = when (lp.anchor) {
@@ -194,7 +208,10 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
                 TextAnchor.Middle -> "middle"
             }
             sb.append("<text class=\"tlabel\" x=\"${f1(lp.x)}\" y=\"${f1(Geometry.labelLineY(lp, 0, lines.size))}\" text-anchor=\"$anchor\">" +
-                lines.withIndex().joinToString("") { (i, l) -> "<tspan x=\"${f1(lp.x)}\" dy=\"${if (i > 0) f1(Geometry.LABEL_LINE_HEIGHT) else "0"}\">${esc(l)}</tspan>" } + "</text>")
+                lines.withIndex().joinToString("") { (i, l) ->
+                    val lc = ElementColors.item(t.color, t.itemColors, l.first)
+                    "<tspan x=\"${f1(lp.x)}\" dy=\"${if (i > 0) f1(Geometry.LABEL_LINE_HEIGHT) else "0"}\"${style(lc?.let { "fill:$it" })}>${esc(l.second)}</tspan>"
+                } + "</text>")
         }
         sb.append("</g>")
     }

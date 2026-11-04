@@ -6,6 +6,7 @@ import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.util.ui.JBFont
 import com.vincegosoftware.fsmeditor.core.DiagramSession
+import com.vincegosoftware.fsmeditor.core.ElementColors
 import com.vincegosoftware.fsmeditor.core.Labels
 import com.vincegosoftware.fsmeditor.core.Num
 import com.vincegosoftware.fsmeditor.core.PointD
@@ -300,10 +301,11 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val issue = issueOf(v.id)
         val dropTarget = drag?.dropState == v.id
 
-        // Outline of the element's own shape: selection, then warnings and errors, win in that order.
-        var stroke = th.line
+        // Outline of the element's own shape: its color, then selection, warnings and errors, win in that order.
+        val own = Theme.colorOf(v.color)
+        var stroke = own ?: th.line
         var shapeWidth = 1.4
-        var fill = th.line
+        var fill = own ?: th.line
         if (selected) {
             stroke = th.accent
             shapeWidth = 2.4
@@ -317,9 +319,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         }
         val shapePen = if (dropTarget) th.stroke(2.5, floatArrayOf(6f, 3f)) else th.stroke(shapeWidth)
         val shapeColor = if (dropTarget) th.accent else stroke
-        val shapeFill = if (v.type == VertexType.Comment) th.noteFill else th.stateFill
-        val textColor = th.foreground
-        val dimText = th.alpha(th.foreground, 0.8)
+        val shapeFill = if (own != null) th.tint(own, th.stateFill) else if (v.type == VertexType.Comment) th.noteFill else th.stateFill
+        val textColor = own ?: th.foreground
+        val dimText = th.alpha(own ?: th.foreground, 0.8)
+        fun itemColor(color: String?) = Theme.colorOf(color) ?: textColor
 
         fun outline(shape: java.awt.Shape, filled: Boolean = true) {
             if (filled) {
@@ -339,11 +342,11 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val cy = y + h / 2
         val r = min(w, h) / 2
         val sepPen = th.stroke(1.0)
-        val sepColor = th.alpha(th.line, 0.8)
+        val sepColor = th.alpha(own ?: th.line, 0.8)
         when (v.type) {
             VertexType.State -> {
                 outline(RoundRectangle2D.Double(x, y, w, h, 20.0, 20.0))
-                val lines = Geo.activityRows(s.model, v)
+                val lines = Geo.activityRowItems(s.model, v)
                 val regions = Geo.regionRects(s.model, v)
                 val title = v.name + if (v.submachine.isNotEmpty()) " : " + s.machineLabel(v.submachine) else ""
                 val centered = regions.isEmpty() && lines.isEmpty()
@@ -360,9 +363,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     var ly = y + Geo.NAME_HEIGHT + if (stereo) 12 else 0
                     if (lines.isNotEmpty()) {
                         g.line(sepPen, sepColor, x, ly, x + w, ly)
-                        for (l in lines) {
+                        for ((l, lc) in lines) {
                             ly += Geo.LINE_HEIGHT
-                            drawText(g, x + 8, ly, l, 11.0, textColor, TextAnchor.Start)
+                            drawText(g, x + 8, ly, l, 11.0, itemColor(lc), TextAnchor.Start)
                         }
                     }
                 }
@@ -392,7 +395,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     g.draw(RoundRectangle2D.Double(gx + 13, gy, 8.0, 6.0, 4.0, 4.0))
                     g.draw(Line2D.Double(gx + 8, gy + 3, gx + 13, gy + 3))
                 }
-                if (v.invariant.isNotEmpty()) drawText(g, x + 4, y + h + 14, "{${v.invariant}}", 11.0, textColor, TextAnchor.Start, italic = true)
+                if (v.invariant.isNotEmpty()) {
+                    drawText(g, x + 4, y + h + 14, "{${v.invariant}}", 11.0, itemColor(ElementColors.item(v.color, v.itemColors, "invariant")), TextAnchor.Start, italic = true)
+                }
             }
             VertexType.Final -> {
                 outline(Ellipse2D.Double(cx - r, cy - r, r * 2, r * 2))
@@ -470,7 +475,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val color = when (issueOf(t.id)) {
             IssueLevel.Error -> th.error
             IssueLevel.Warning -> th.warning
-            IssueLevel.None -> if (selected) th.accent else th.line
+            IssueLevel.None -> if (selected) th.accent else Theme.colorOf(t.color) ?: th.line
         }
         g.stroke = th.stroke(if (selected) 2.0 else 1.3)
         g.color = color
@@ -485,12 +490,13 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         arrow.lineTo(b.x, b.y)
         arrow.lineTo(p2.x, p2.y)
         g.draw(arrow)
-        val lines = Labels.transitionLabelLines(s.model, t)
+        val lines = Labels.transitionLabelItems(s.model, t)
         if (lines.isNotEmpty()) {
             val lp = Geo.labelPos(t, pts)
             var box: Rectangle2D? = null
             for ((i, line) in lines.withIndex()) {
-                val b = drawText(g, lp.x, Geo.labelLineY(lp, i, lines.size), line, 11.0, if (selected) th.accent else th.foreground, lp.anchor, halo = th.background) ?: continue
+                val text = Theme.colorOf(ElementColors.item(t.color, t.itemColors, line.first)) ?: if (selected) th.accent else th.foreground
+                val b = drawText(g, lp.x, Geo.labelLineY(lp, i, lines.size), line.second, 11.0, text, lp.anchor, halo = th.background) ?: continue
                 box = box?.createUnion(b) ?: b
             }
             if (box != null) labels.add(box to t.id)

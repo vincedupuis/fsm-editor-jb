@@ -49,7 +49,11 @@ object Geometry {
 
     /** The internal activities of a state as drawn: each line wrapped to the width of the state. */
     fun activityRows(model: FsmModel, v: Vertex, measure: (String) -> Double = textMeasure): List<String> =
-        Labels.activityLines(model, v).flatMap { commentLines(it, v.w - 16, measure) }
+        activityRowItems(model, v, measure).map { it.first }
+
+    /** [activityRows] with the color of each row (null: the default). */
+    fun activityRowItems(model: FsmModel, v: Vertex, measure: (String) -> Double = textMeasure): List<Pair<String, String?>> =
+        Labels.activityItems(model, v).flatMap { (line, color) -> commentLines(line, v.w - 16, measure).map { it to color } }
 
     /** Height of the name compartment plus the internal activities compartment. */
     fun headerHeight(model: FsmModel, v: Vertex, measure: (String) -> Double = textMeasure): Double {

@@ -1,6 +1,7 @@
 package com.vincegosoftware.fsmeditor.editor
 
 import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.vincegosoftware.fsmeditor.core.ElementColors
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
@@ -29,6 +30,9 @@ class Theme private constructor() {
     val warning = Color(0xbf, 0x88, 0x03)
     val info = Color(0x1a, 0x85, 0xff)
 
+    /** Fill of a colored shape: a light tint of its color over the shape background. */
+    fun tint(c: Color, background: Color): Color = mix(background, c, ElementColors.TINT_AMOUNT)
+
     fun alpha(c: Color, opacity: Double): Color = Color(c.red, c.green, c.blue, (c.alpha * opacity).roundToInt().coerceIn(0, 255))
 
     fun stroke(width: Double, dashes: FloatArray? = null): BasicStroke =
@@ -43,6 +47,13 @@ class Theme private constructor() {
         /** Forgets the colors after a theme or color scheme change. */
         fun reset() {
             cached = null
+        }
+
+        /** A diagram color of the model (`#rrggbb`), or null when there is none. */
+        fun colorOf(hex: String?): Color? {
+            val c = ElementColors.of(hex) ?: return null
+            val (r, g, b) = ElementColors.rgb(c)
+            return Color(r, g, b)
         }
 
         /** [a] moved towards [b] by [k] (0..1). */

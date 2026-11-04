@@ -384,6 +384,22 @@ class DiagramSession(model: FsmModel) {
         commit()
     }
 
+    /** Sets the color of a vertex ([key] null) or of one of its items; null or empty clears it. */
+    fun setColor(v: Vertex, key: String?, color: String?) = setColor({ v.color = it }, v.itemColors, key, color)
+
+    /** Sets the color of a transition ([key] null) or of one of its label's items; null or empty clears it. */
+    fun setColor(t: Transition, key: String?, color: String?) = setColor({ t.color = it }, t.itemColors, key, color)
+
+    private fun setColor(setOwn: (String) -> Unit, items: MutableMap<String, String>, key: String?, color: String?) {
+        val c = if (ElementColors.isColor(color)) color!! else ""
+        when {
+            key == null -> setOwn(c)
+            c.isNotEmpty() -> items[key] = c
+            else -> items.remove(key)
+        }
+        commit()
+    }
+
     fun setSubmachine(v: Vertex, href: String): Boolean {
         if (href.isNotEmpty() && v.regions.isNotEmpty()) {
             say("Remove the regions first: a submachine state cannot own regions.")

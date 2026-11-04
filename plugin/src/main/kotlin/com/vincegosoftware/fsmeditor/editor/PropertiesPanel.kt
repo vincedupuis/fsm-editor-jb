@@ -2,6 +2,9 @@ package com.vincegosoftware.fsmeditor.editor
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.popup.JBPopup
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.ui.ColorChooserService
 import com.intellij.ui.InplaceButton
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
@@ -14,6 +17,7 @@ import com.intellij.util.ui.UIUtil
 import com.vincegosoftware.fsmeditor.core.Check
 import com.vincegosoftware.fsmeditor.core.ConnectionPointInfo
 import com.vincegosoftware.fsmeditor.core.DiagramSession
+import com.vincegosoftware.fsmeditor.core.ElementColors
 import com.vincegosoftware.fsmeditor.core.Expressions
 import com.vincegosoftware.fsmeditor.core.Labels
 import com.vincegosoftware.fsmeditor.core.MachineKind
@@ -24,18 +28,26 @@ import com.vincegosoftware.fsmeditor.core.Transition
 import com.vincegosoftware.fsmeditor.core.TransitionKind
 import com.vincegosoftware.fsmeditor.core.Vertex
 import com.vincegosoftware.fsmeditor.core.VertexType
+import java.awt.BasicStroke
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Component
 import java.awt.Container
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.GridLayout
 import java.awt.KeyboardFocusManager
+import java.awt.RenderingHints
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import javax.swing.BorderFactory
 import javax.swing.BoxLayout
+import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -304,6 +316,145 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         return panel
     }
 
+    // ---------------------------------------------------------------- colors
+
+    /** A square of [color], or with a diagonal line for the default color. */
+    private class SwatchIcon(private val color: Color?, private val size: Int, private val outline: Color, private val current: Boolean = false) : Icon {
+        override fun getIconWidth() = size
+        override fun getIconHeight() = size
+
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val arc = JBUI.scale(4)
+                if (color != null) {
+                    g2.color = color
+                    g2.fillRoundRect(x, y, size - 1, size - 1, arc, arc)
+                } else {
+                    g2.color = outline
+                    g2.drawLine(x + 2, y + size - 3, x + size - 3, y + 2)
+                }
+                g2.color = outline
+                g2.stroke = BasicStroke(if (current) JBUI.scale(2).toFloat() else 1f)
+                g2.drawRoundRect(x, y, size - 1, size - 1, arc, arc)
+            } finally {
+                g2.dispose()
+            }
+        }
+    }
+
+    private fun swatch(color: Color?, size: Int, tooltip: String, current: Boolean = false, onClick: () -> Unit) =
+        JButton(SwatchIcon(color, JBUI.scale(size), if (current) th.foreground else JBColor.border(), current)).apply {
+            toolTipText = tooltip
+            accessibleContext.accessibleName = tooltip
+            isBorderPainted = false
+            isContentAreaFilled = false
+            isFocusPainted = true
+            border = JBUI.Borders.empty(2)
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addActionListener { onClick() }
+        }
+
+    /** A swatch showing [value] (empty: the default color) that opens a palette; [onChange] gets a color or null. */
+    private fun colorButton(value: String, onChange: (String?) -> Unit, title: String): JButton {
+        val current = ElementColors.of(value)
+        lateinit var button: JButton
+        button = swatch(Theme.colorOf(current), 14, "$title: ${current ?: "default"}") { openPalette(button, current, title, onChange) }
+        return button
+    }
+
+    private fun openPalette(anchor: JComponent, value: String?, title: String, onChange: (String?) -> Unit) {
+        var popup: JBPopup? = null
+        fun pick(c: String?) {
+            popup?.cancel()
+            if (c != value) onChange(c)
+        }
+        val grid = JPanel(GridLayout(2, 6, JBUI.scale(2), JBUI.scale(2))).apply { isOpaque = false }
+        for (hex in ElementColors.PALETTE) grid.add(swatch(Theme.colorOf(hex), 20, hex, hex == value) { pick(hex) })
+        val custom = JButton("Custom…").apply {
+            toolTipText = "Choose any color"
+            addActionListener {
+                popup?.cancel()
+                val chosen = ColorChooserService.instance.showDialog(anchor, title, Theme.colorOf(value), false)
+                    ?: return@addActionListener
+                val hex = "#%02x%02x%02x".format(chosen.red, chosen.green, chosen.blue)
+                if (hex != value) onChange(hex)
+            }
+        }
+        val reset = JButton("Default").apply {
+            toolTipText = "Remove the color"
+            isEnabled = value != null
+            addActionListener { pick(null) }
+        }
+        val buttons = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(8)
+            add(custom, BorderLayout.WEST)
+            add(reset, BorderLayout.EAST)
+        }
+        val content = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(8)
+            add(JBLabel(title).apply {
+                font = JBFont.small()
+                foreground = UIUtil.getContextHelpForeground()
+                border = JBUI.Borders.emptyBottom(6)
+            }, BorderLayout.NORTH)
+            add(grid, BorderLayout.CENTER)
+            add(buttons, BorderLayout.SOUTH)
+        }
+        popup = JBPopupFactory.getInstance().createComponentPopupBuilder(content, grid.getComponent(0) as JComponent)
+            .setRequestFocus(true)
+            .setFocusable(true)
+            .setCancelOnClickOutside(true)
+            .createPopup()
+        popup.showUnderneathOf(anchor)
+    }
+
+    /** The "Color" row of an element. */
+    private fun colorField(value: String, onChange: (String?) -> Unit, what: String): JComponent {
+        val row = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(8)
+        }
+        row.add(JBLabel("Color").apply {
+            font = JBFont.small()
+            foreground = UIUtil.getContextHelpForeground()
+            preferredSize = Dimension(JBUI.scale(40), preferredSize.height)
+        })
+        row.add(colorButton(value, onChange, "Color of $what"))
+        row.add(JBLabel(ElementColors.of(value) ?: "Default").apply {
+            font = JBFont.small()
+            foreground = UIUtil.getContextHelpForeground()
+            border = JBUI.Borders.emptyLeft(4)
+        })
+        row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
+        return row
+    }
+
+    /** Puts a color swatch at the right of a field's label (the field made by [field]). */
+    private fun withColor(field: JComponent, value: String, onChange: (String?) -> Unit, what: String): JComponent {
+        val label = field.getComponent(0) as? JBLabel ?: return field
+        field.remove(0)
+        val head = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = label.border
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        label.border = null
+        head.add(label, BorderLayout.CENTER)
+        head.add(colorButton(value, onChange, "Color of $what").apply { border = JBUI.Borders.empty() }, BorderLayout.EAST)
+        head.maximumSize = Dimension(Int.MAX_VALUE, head.preferredSize.height)
+        field.add(head, 0)
+        return field
+    }
+
+    private fun withColor(field: JComponent, s: DiagramSession, v: Vertex, key: String, what: String) =
+        withColor(field, v.itemColors[key] ?: "", { s.setColor(v, key, it); render() }, what)
+
+    private fun withColor(field: JComponent, s: DiagramSession, t: Transition, key: String?, what: String) =
+        if (key == null) field else withColor(field, t.itemColors[key] ?: "", { s.setColor(t, key, it); render() }, what)
+
     private fun row(main: JComponent, vararg trailing: JComponent): JComponent {
         val row = JPanel(BorderLayout())
         row.isOpaque = false
@@ -385,6 +536,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             }
             else -> put(textField("Name", v.name, { v.name = it.trim(); commit() }))
         }
+        put(colorField(v.color, { s.setColor(v, null, it); render() }, if (v.type == VertexType.Comment) "the comment" else v.name.ifEmpty { "the element" }))
 
         if (v.type == VertexType.State) stateProps(s, v)
 
@@ -408,11 +560,17 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         put(
             textField("Stereotype", v.stereotype, set { v.stereotype = it }, Expressions::checkName, "e.g. Critical"),
             h4("Behaviors"),
-            textField("entry /", v.entry, set { v.entry = it }, Expressions::checkActions, "e.g. start(); log()"),
-            textField("exit /", v.exit, set { v.exit = it }, Expressions::checkActions, "e.g. stop()"),
-            textField("do /", v.doActivity, set { v.doActivity = it }, Expressions::checkActions, "e.g. poll()"),
-            listField("Deferrable events", v.deferrable, { v.deferrable = it.toMutableList(); commit() }, Expressions::checkEvent, "evA, evB"),
-            textField("State invariant", v.invariant, set { v.invariant = it }, Expressions::checkCondition, "e.g. isRunning() && !isFaulty()"),
+            withColor(textField("entry /", v.entry, set { v.entry = it }, Expressions::checkActions, "e.g. start(); log()"), s, v, "entry", "entry"),
+            withColor(textField("exit /", v.exit, set { v.exit = it }, Expressions::checkActions, "e.g. stop()"), s, v, "exit", "exit"),
+            withColor(textField("do /", v.doActivity, set { v.doActivity = it }, Expressions::checkActions, "e.g. poll()"), s, v, "doActivity", "do"),
+            withColor(
+                listField("Deferrable events", v.deferrable, { v.deferrable = it.toMutableList(); commit() }, Expressions::checkEvent, "evA, evB"),
+                s, v, "deferrable", "the deferrable events",
+            ),
+            withColor(
+                textField("State invariant", v.invariant, set { v.invariant = it }, Expressions::checkCondition, "e.g. isRunning() && !isFaulty()"),
+                s, v, "invariant", "the state invariant",
+            ),
         )
 
         put(h4("Submachine"))
@@ -477,7 +635,8 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                 committed = Labels.transitionLabel(s.model, t)
                 tb.text = committed
             }
-            put(row(tb, iconButton("Remove") {
+            val colorOfInternal = colorButton(t.color, { s.setColor(t, null, it); render() }, "Color of ${Labels.transitionLabel(s.model, t).ifEmpty { "the internal transition" }}")
+            put(row(tb, colorOfInternal, iconButton("Remove") {
                 s.removeTransition(t)
                 render()
             }))
@@ -580,21 +739,39 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                 s.setKind(t, if (it == "internal") TransitionKind.Internal else if (it == "local") TransitionKind.Local else TransitionKind.External)
                 render()
             },
-            listField("Triggers", t.triggers, { t.triggers = it.toMutableList(); commit() }, Expressions::checkTrigger, "event, after(500ms), after(2s)"),
+            colorField(t.color, { s.setColor(t, null, it); render() }, "the transition"),
+        )
+        // Internal transitions drawn in their state's compartment take a single color.
+        val inCompartment = t.kind == TransitionKind.Internal && t.source == t.target && src?.type == VertexType.State
+        fun item(key: String) = if (inCompartment) null else key
+        put(
+            withColor(
+                listField("Triggers", t.triggers, { t.triggers = it.toMutableList(); commit() }, Expressions::checkTrigger, "event, after(500ms), after(2s)"),
+                s, t, item("triggers"), "the triggers",
+            ),
         )
         if (s.model.kind == MachineKind.Protocol) {
             put(
-                textField("Precondition", t.precondition, { t.precondition = it; commit() }, Expressions::checkCondition, "e.g. isOpen()"),
-                textField("Postcondition", t.postcondition, { t.postcondition = it; commit() }, Expressions::checkCondition, "e.g. isClosed()"),
+                withColor(
+                    textField("Precondition", t.precondition, { t.precondition = it; commit() }, Expressions::checkCondition, "e.g. isOpen()"),
+                    s, t, item("precondition"), "the precondition",
+                ),
+                withColor(
+                    textField("Postcondition", t.postcondition, { t.postcondition = it; commit() }, Expressions::checkCondition, "e.g. isClosed()"),
+                    s, t, item("postcondition"), "the postcondition",
+                ),
             )
         } else {
             val allowElse = Labels.allowsElse(src)
             put(
-                textField(
-                    "Guard", t.guard, { t.guard = it; commit() }, { Expressions.checkGuard(it, allowElse) },
-                    if (allowElse) "e.g. hasDisc() && !isJammed(), or else" else "e.g. hasDisc() && !isJammed()",
+                withColor(
+                    textField(
+                        "Guard", t.guard, { t.guard = it; commit() }, { Expressions.checkGuard(it, allowElse) },
+                        if (allowElse) "e.g. hasDisc() && !isJammed(), or else" else "e.g. hasDisc() && !isJammed()",
+                    ),
+                    s, t, item("guard"), "the guard",
                 ),
-                textField("Effect", t.effect, { t.effect = it; commit() }, Expressions::checkActions, "e.g. notify(); log()"),
+                withColor(textField("Effect", t.effect, { t.effect = it; commit() }, Expressions::checkActions, "e.g. notify(); log()"), s, t, item("effect"), "the effect"),
             )
         }
         put(h4("Routing"))

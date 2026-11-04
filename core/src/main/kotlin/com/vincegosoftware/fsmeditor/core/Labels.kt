@@ -19,18 +19,25 @@ object Labels {
     }
 
     /** The label as stacked lines: events, `[guard]`, `/ effect` (protocol: `[pre]`, event, `/ [post]`). */
-    fun transitionLabelLines(model: FsmModel, t: Transition): List<String> {
+    fun transitionLabelLines(model: FsmModel, t: Transition): List<String> = transitionLabelItems(model, t).map { it.second }
+
+    /** [transitionLabelLines] with the item key ([ElementColors.ITEM_KEYS]) each line shows. */
+    fun transitionLabelItems(model: FsmModel, t: Transition): List<Pair<String, String>> {
         val trig = t.triggers.joinToString(", ")
         val lines = if (model.kind == MachineKind.Protocol) {
             listOf(
-                if (t.precondition.isNotEmpty()) "[${t.precondition}]" else "",
-                trig,
-                if (t.postcondition.isNotEmpty()) "/ [${t.postcondition}]" else "",
+                "precondition" to if (t.precondition.isNotEmpty()) "[${t.precondition}]" else "",
+                "triggers" to trig,
+                "postcondition" to if (t.postcondition.isNotEmpty()) "/ [${t.postcondition}]" else "",
             )
         } else {
-            listOf(trig, if (t.guard.isNotEmpty()) "[${t.guard}]" else "", if (t.effect.isNotEmpty()) "/ ${t.effect}" else "")
+            listOf(
+                "triggers" to trig,
+                "guard" to if (t.guard.isNotEmpty()) "[${t.guard}]" else "",
+                "effect" to if (t.effect.isNotEmpty()) "/ ${t.effect}" else "",
+            )
         }
-        return lines.filter { it.isNotEmpty() }
+        return lines.filter { it.second.isNotEmpty() }
     }
 
     /** May transitions leaving [source] use the [else] guard? */
@@ -90,15 +97,19 @@ object Labels {
         model.transitions.filter { it.kind == TransitionKind.Internal && it.source == v.id && it.target == v.id }
 
     /** Lines of the internal activities compartment of a state. */
-    fun activityLines(model: FsmModel, v: Vertex): List<String> {
-        val output = ArrayList<String>()
-        if (v.entry.isNotEmpty()) output.add("entry / ${v.entry}")
-        if (v.exit.isNotEmpty()) output.add("exit / ${v.exit}")
-        if (v.doActivity.isNotEmpty()) output.add("do / ${v.doActivity}")
-        for (d in v.deferrable) output.add("$d / defer")
+    fun activityLines(model: FsmModel, v: Vertex): List<String> = activityItems(model, v).map { it.first }
+
+    /** [activityLines] with the color each line is drawn in (null: the default). */
+    fun activityItems(model: FsmModel, v: Vertex): List<Pair<String, String?>> {
+        val output = ArrayList<Pair<String, String?>>()
+        fun add(text: String, key: String) = output.add(text to ElementColors.item(v.color, v.itemColors, key))
+        if (v.entry.isNotEmpty()) add("entry / ${v.entry}", "entry")
+        if (v.exit.isNotEmpty()) add("exit / ${v.exit}", "exit")
+        if (v.doActivity.isNotEmpty()) add("do / ${v.doActivity}", "doActivity")
+        for (d in v.deferrable) add("$d / defer", "deferrable")
         for (t in internalTransitions(model, v)) {
             val label = transitionLabel(model, t)
-            output.add(label.ifEmpty { "(internal)" })
+            output.add(label.ifEmpty { "(internal)" } to (ElementColors.of(t.color) ?: ElementColors.of(v.color)))
         }
         return output
     }

@@ -20,6 +20,7 @@ object ClipboardJson {
         if (v.deferrable.isNotEmpty()) o.raw("deferrable", stringArray(v.deferrable))
         if (v.type == VertexType.ConnectionPointRef) o.str("ref", v.ref).str("pointKind", if (v.pointKind == PointKind.Exit) "exit" else "entry")
         if (v.type == VertexType.Comment) o.str("text", v.text).raw("anchors", stringArray(v.anchors))
+        writeColors(o, v.color, v.itemColors)
         return o.toString()
     }
 
@@ -32,7 +33,26 @@ object ClipboardJson {
             o.raw("points", "[" + t.points.joinToString(",") { JsonObjectWriter().num("x", it.x).num("y", it.y).toString() } + "]")
         }
         t.labelOffset?.let { o.raw("labelOffset", JsonObjectWriter().num("x", it.x).num("y", it.y).toString()) }
+        writeColors(o, t.color, t.itemColors)
         return o.toString()
+    }
+
+    private fun writeColors(o: JsonObjectWriter, color: String, items: Map<String, String>) {
+        if (ElementColors.isColor(color)) o.str("color", color)
+        val keys = ElementColors.ITEM_KEYS.filter { ElementColors.isColor(items[it]) }
+        if (keys.isNotEmpty()) o.raw("itemColors", keys.fold(JsonObjectWriter()) { w, k -> w.str(k, items[k]) }.toString())
+    }
+
+    private fun readColor(o: Map<*, *>, key: String): String = str(o, key).takeIf(ElementColors::isColor) ?: ""
+
+    private fun readItemColors(o: Map<*, *>): MutableMap<String, String> {
+        val items = linkedMapOf<String, String>()
+        val d = o["itemColors"] as? Map<*, *> ?: return items
+        for (k in ElementColors.ITEM_KEYS) {
+            val c = readColor(d, k)
+            if (c.isNotEmpty()) items[k] = c
+        }
+        return items
     }
 
     private fun stringArray(items: List<String>) = "[" + items.joinToString(",", transform = Json::quote) + "]"
@@ -79,6 +99,8 @@ object ClipboardJson {
             v.pointKind = if (str(item, "pointKind") == "exit") PointKind.Exit else PointKind.Entry
             v.text = str(item, "text")
             v.anchors = list(item, "anchors").filterIsInstance<String>().toMutableList()
+            v.color = readColor(item, "color")
+            v.itemColors = readItemColors(item)
             data.vertices.add(v)
         }
         for (item in list(root, "transitions").filterIsInstance<Map<*, *>>()) {
@@ -96,6 +118,8 @@ object ClipboardJson {
             t.points = list(item, "points").filterIsInstance<Map<*, *>>().mapTo(mutableListOf()) { PointD(dbl(it, "x"), dbl(it, "y")) }
             val off = item["labelOffset"]
             if (off is Map<*, *>) t.labelOffset = PointD(dbl(off, "x"), dbl(off, "y"))
+            t.color = readColor(item, "color")
+            t.itemColors = readItemColors(item)
             data.transitions.add(t)
         }
         return data

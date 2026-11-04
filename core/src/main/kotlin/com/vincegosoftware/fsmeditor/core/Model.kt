@@ -115,6 +115,47 @@ data class PointD(val x: Double, val y: Double) {
     override fun toString() = "$x,$y"
 }
 
+/**
+ * Diagram colors (`#rrggbb`): an element's own `color`, and per item of its
+ * text in `itemColors`, keyed by [ITEM_KEYS].
+ */
+object ElementColors {
+    /** Items of a state or transition that can have their own color, in file order. */
+    val ITEM_KEYS = listOf(
+        "entry", "exit", "doActivity", "deferrable", "invariant",
+        "triggers", "guard", "effect", "precondition", "postcondition",
+    )
+
+    /** Colors offered by the properties panel, readable on light and dark backgrounds. */
+    val PALETTE = listOf(
+        "#e5484d", "#f76b15", "#d4a20b", "#30a46c", "#12a594", "#0090ff",
+        "#3e63dd", "#8e4ec6", "#d6409f", "#a18072", "#8b8d98", "#5b5bd6",
+    )
+
+    /** Share of a shape's color in the tint of its fill. */
+    const val TINT_AMOUNT = 0.16
+
+    fun isColor(s: String?): Boolean =
+        s != null && s.length == 7 && s[0] == '#' && s.substring(1).all { it in '0'..'9' || it in 'a'..'f' }
+
+    /** The element's own color, or null. */
+    fun of(own: String?): String? = if (isColor(own)) own else null
+
+    /** The color of one item: its own, else the element's, else null. */
+    fun item(own: String, items: Map<String, String>, key: String): String? = of(items[key]) ?: of(own)
+
+    /** Red, green and blue of a `#rrggbb` color. */
+    fun rgb(c: String): Triple<Int, Int, Int> =
+        Triple(c.substring(1, 3).toInt(16), c.substring(3, 5).toInt(16), c.substring(5, 7).toInt(16))
+
+    /** Fill of a colored shape in the SVG export: a light tint of its color over the shape background (#fdfdfd). */
+    fun tint(c: String): String {
+        val (r, g, b) = rgb(c)
+        fun mix(v: Int) = "%02x".format(Num.round(v * TINT_AMOUNT + 0xfd * 0.84).toInt())
+        return "#" + mix(r) + mix(g) + mix(b)
+    }
+}
+
 class Region(var id: String = "", var name: String = "") {
     fun copy() = Region(id, name)
 }
@@ -149,6 +190,11 @@ class Vertex(
     var text: String = ""
     var anchors: MutableList<String> = mutableListOf()
 
+    /** Diagram color, `#rrggbb`, or empty for the default (see [ElementColors]). */
+    var color: String = ""
+    /** Colors of items of the state's text, keyed by [ElementColors.ITEM_KEYS]. */
+    var itemColors: MutableMap<String, String> = linkedMapOf()
+
     val centerX: Double get() = x + w / 2
     val centerY: Double get() = y + h / 2
     val center: PointD get() = PointD(x + w / 2, y + h / 2)
@@ -168,6 +214,8 @@ class Vertex(
         v.pointKind = pointKind
         v.text = text
         v.anchors = anchors.toMutableList()
+        v.color = color
+        v.itemColors = LinkedHashMap(itemColors)
         return v
     }
 }
@@ -188,6 +236,10 @@ class Transition(
     var points: MutableList<PointD> = mutableListOf()
     /** Offset of the label from its default place, or null when it was never moved. */
     var labelOffset: PointD? = null
+    /** Diagram color, `#rrggbb`, or empty for the default (see [ElementColors]). */
+    var color: String = ""
+    /** Colors of the label's items, keyed by [ElementColors.ITEM_KEYS]. */
+    var itemColors: MutableMap<String, String> = linkedMapOf()
 
     fun copy(): Transition {
         val t = Transition(id, source, target, kind)
@@ -198,6 +250,8 @@ class Transition(
         t.postcondition = postcondition
         t.points = points.toMutableList()
         t.labelOffset = labelOffset
+        t.color = color
+        t.itemColors = LinkedHashMap(itemColors)
         return t
     }
 }

@@ -14,7 +14,10 @@ class XmiException(message: String) : Exception(message)
  *   its source and target with the bend points in between, plus an optional
  *   UMLLabel whose center is the middle of those waypoints moved by the
  *   label offset;
- * - the region layout of an orthogonal state follows from its region shapes.
+ * - the region layout of an orthogonal state follows from its region shapes;
+ * - colors are kept in one xmi:Extension at the end of the diagram, with a
+ *   <style element="id" color="#rrggbb" entry="#rrggbb" …/> per colored
+ *   vertex or transition (UML DI has no color).
  *
  * `toXmi(fromXmi(x))` round-trips without loss (coordinates are rounded to 0.1 px),
  * and the output is identical to the one of FSM Editor for VS Code.
@@ -32,6 +35,7 @@ object Xmi {
     /** Language of the opaque behaviors and expressions (argument-less calls, see [Expressions]). */
     private const val LANGUAGE = "FSM"
 
+    private const val EXTENDER = "FSM Editor"
     private const val LABEL_W = 100.0
     private const val LABEL_H = 16.0
 
@@ -286,8 +290,21 @@ object Xmi {
                 )
             }
         }
+        val styles = ArrayList<XNode>()
+        fun addStyle(id: String, color: String, items: Map<String, String>) {
+            val style = XNode("style", "element" to id)
+            if (ElementColors.isColor(color)) style.attrs.add("color" to color)
+            for (k in ElementColors.ITEM_KEYS) {
+                val c = items[k]
+                if (ElementColors.isColor(c)) style.attrs.add(k to c)
+            }
+            if (style.attrs.size > 1) styles.add(style)
+        }
+        for (v in m.vertices) addStyle(v.id, v.color, v.itemColors)
+        for (t in m.transitions) addStyle(t.id, t.color, t.itemColors)
         val diagram = XNode("umldi:UMLStateMachineDiagram", "xmi:id" to smId + "_diagram", "name" to m.name, "modelElement" to smId, "isFrame" to "false")
             .add(shapes, edges)
+        if (styles.isNotEmpty()) diagram.add(XNode("xmi:Extension", "extender" to EXTENDER).add(styles))
 
         val root = XNode(
             "xmi:XMI",
@@ -495,6 +512,30 @@ object Xmi {
         val regionShapes = HashMap<String, RectD>()
         for (d in root.children) {
             if (d.ns != NS_UMLDI) continue
+            for (ext in kids(d, "xmi:Extension")) {
+                if (ext.attr("extender") != EXTENDER) continue
+                for (st in kids(ext, "style")) {
+                    val id = st.attr("element") ?: ""
+                    fun read(name: String) = (st.attr(name) ?: "").lowercase()
+                    fun apply(setColor: (String) -> Unit, items: MutableMap<String, String>) {
+                        val color = read("color")
+                        if (ElementColors.isColor(color)) setColor(color)
+                        val found = LinkedHashMap<String, String>()
+                        for (k in ElementColors.ITEM_KEYS) {
+                            val c = read(k)
+                            if (ElementColors.isColor(c)) found[k] = c
+                        }
+                        if (found.isNotEmpty()) {
+                            items.clear()
+                            items.putAll(found)
+                        }
+                    }
+                    val sv = byId[id]
+                    val stt = transitions[id]
+                    if (sv != null) apply({ sv.color = it }, sv.itemColors)
+                    else if (stt != null) apply({ stt.color = it }, stt.itemColors)
+                }
+            }
             for (el in walk(d)) {
                 val type = typeOf(el)
                 val target = firstRef(el, "modelElement")
