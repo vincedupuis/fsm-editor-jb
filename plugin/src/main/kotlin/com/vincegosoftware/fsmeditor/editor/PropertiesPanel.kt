@@ -494,7 +494,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             "Drag" to "the ⊕ handle of a selected element to draw a transition.",
             "Double-click" to "a transition to add a bend point, a bend point to remove it.",
             "Drop" to "an element into a region to nest it.",
-            "Right-drag" to "Space+drag or middle-drag pans; the wheel zooms; F fits.",
+            "Right-drag" to "Space+drag, middle-drag or two fingers pan; the wheel or a pinch zooms; F fits.",
             "Shift+click" to "a tool keeps it active.",
             "Label syntax" to if (m.kind == MachineKind.Protocol) "[isReady()] event / [isDone()]" else "event, after(2s) [isReady() && !isBusy()] / doIt(); log()",
             "Behaviors" to "are calls without arguments, e.g. start(); there are no variables.",

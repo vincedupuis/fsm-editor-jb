@@ -50,6 +50,7 @@ import java.awt.geom.Line2D
 import java.awt.geom.Path2D
 import java.awt.geom.Rectangle2D
 import java.awt.geom.RoundRectangle2D
+import java.lang.reflect.Proxy
 import javax.swing.JComponent
 import javax.swing.SwingUtilities
 import kotlin.math.abs
@@ -93,6 +94,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         addMouseListener(mouse)
         addMouseMotionListener(mouse)
         addMouseWheelListener(mouse)
+        if (SystemInfo.isMac && !GraphicsEnvironment.isHeadless()) installPinchZoom()
         addKeyListener(Keys())
         addFocusListener(object : FocusAdapter() {
             override fun focusLost(e: FocusEvent) {
@@ -140,6 +142,42 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     }
 
     fun zoomCenter(factor: Double) = zoomAt(factor, width / 2.0, height / 2.0)
+
+    /**
+     * macOS delivers a trackpad pinch as a magnification gesture, through Apple's
+     * `com.apple.eawt.event` API (opened to plugins by the IDE launcher). It is called by
+     * reflection, since the classes only exist in the macOS JDK. Consuming the event keeps it
+     * from the IDE frame's own gesture listener.
+     */
+    private fun installPinchZoom() {
+        try {
+            val pkg = "com.apple.eawt.event"
+            val listenerClass = Class.forName("$pkg.MagnificationListener")
+            val eventClass = Class.forName("$pkg.MagnificationEvent")
+            val magnification = eventClass.getMethod("getMagnification")
+            val consume = eventClass.getMethod("consume")
+            val listener = Proxy.newProxyInstance(listenerClass.classLoader, arrayOf(listenerClass)) { proxy, method, args ->
+                when (method.name) {
+                    "magnify" -> {
+                        val event = args[0]
+                        consume.invoke(event)
+                        val p = mousePosition ?: Point(width / 2, height / 2)
+                        zoomAt(exp(magnification.invoke(event) as Double), p.x.toDouble(), p.y.toDouble())
+                        null
+                    }
+                    "equals" -> proxy === args?.get(0)
+                    "hashCode" -> System.identityHashCode(proxy)
+                    "toString" -> "FSM diagram pinch zoom"
+                    else -> null
+                }
+            }
+            Class.forName("$pkg.GestureUtilities")
+                .getMethod("addGestureListenerTo", JComponent::class.java, Class.forName("$pkg.GestureListener"))
+                .invoke(null, this, listener)
+        } catch (e: Exception) {
+            // Missing, or not opened to plugins (InaccessibleObjectException): Ctrl+wheel still zooms.
+        }
+    }
 
     fun fit() {
         val s = s ?: return
@@ -962,11 +1000,30 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             editor.renderStatus()
         }
 
+        private var wheelBurstEnd = 0L
+        private var wheelTrackpad = false
+
         override fun mouseWheelMoved(e: MouseWheelEvent) {
             val rotation = e.preciseWheelRotation
-            // The wheel zooms around the pointer; Shift+wheel (or a horizontal trackpad scroll) pans sideways.
-            if (e.isShiftDown) setView(viewX - rotation * 30, viewY, zoom)
-            else zoomAt(exp(-rotation * 0.216), e.x.toDouble(), e.y.toDouble())
+            // The mouse wheel zooms around the pointer and Shift+wheel pans sideways; a trackpad pans in
+            // both directions (macOS sends its horizontal scroll as Shift+wheel) and pinches to zoom
+            // (Ctrl+wheel on Windows and Linux, installPinchZoom on macOS). The JDK accumulates a
+            // trackpad's sub-notch deltas, so it reports a zero wheelRotation with a non-zero precise
+            // rotation, which a mouse wheel never does: one such event makes its burst of events
+            // (no gap over 250 ms) a trackpad scroll.
+            if (e.`when` > wheelBurstEnd) wheelTrackpad = false
+            wheelBurstEnd = e.`when` + 250
+            if (e.wheelRotation == 0 && rotation != 0.0) wheelTrackpad = true
+            when {
+                e.isControlDown -> zoomAt(exp(-rotation * 0.216), e.x.toDouble(), e.y.toDouble())
+                wheelTrackpad -> {
+                    // macOS reports a tenth of the pixels; Windows 1/120 of a wheel delta.
+                    val d = rotation * if (SystemInfo.isMac) 10.0 else 100.0
+                    if (e.isShiftDown) setView(viewX - d, viewY, zoom) else setView(viewX, viewY - d, zoom)
+                }
+                e.isShiftDown -> setView(viewX - rotation * 30, viewY, zoom)
+                else -> zoomAt(exp(-rotation * 0.216), e.x.toDouble(), e.y.toDouble())
+            }
             e.consume()
         }
     }
