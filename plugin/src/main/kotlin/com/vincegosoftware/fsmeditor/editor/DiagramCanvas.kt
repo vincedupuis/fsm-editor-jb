@@ -1007,7 +1007,8 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             val rotation = e.preciseWheelRotation
             // The mouse wheel zooms around the pointer and Shift+wheel pans sideways; a trackpad pans in
             // both directions (macOS sends its horizontal scroll as Shift+wheel) and pinches to zoom
-            // (Ctrl+wheel on Windows and Linux, installPinchZoom on macOS). The JDK accumulates a
+            // (Ctrl+wheel on Windows and Linux, installPinchZoom on macOS, where Cmd+wheel zooms since
+            // the system keeps Ctrl+scroll for its own zoom). The JDK accumulates a
             // trackpad's sub-notch deltas, so it reports a zero wheelRotation with a non-zero precise
             // rotation, which a mouse wheel never does: one such event makes its burst of events
             // (no gap over 250 ms) a trackpad scroll.
@@ -1015,7 +1016,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             wheelBurstEnd = e.`when` + 250
             if (e.wheelRotation == 0 && rotation != 0.0) wheelTrackpad = true
             when {
-                e.isControlDown -> zoomAt(exp(-rotation * 0.216), e.x.toDouble(), e.y.toDouble())
+                (if (SystemInfo.isMac) e.isMetaDown else e.isControlDown) -> zoomAt(exp(-rotation * 0.216), e.x.toDouble(), e.y.toDouble())
                 wheelTrackpad -> {
                     // macOS reports a tenth of the pixels; Windows 1/120 of a wheel delta.
                     val d = rotation * if (SystemInfo.isMac) 10.0 else 100.0
