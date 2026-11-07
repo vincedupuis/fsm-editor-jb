@@ -157,42 +157,67 @@ object Geometry {
         return ix.vertex(t.source)?.type == VertexType.State
     }
 
-    /** Smallest distance between a state and the far corner of its self-transition loop. */
+    /** Smallest distance between a state and the far corner of its self-transition loop, and between its ends and that corner of the state. */
     const val LOOP_MIN_GAP = 10.0
 
-    /** Far corner of a state's self-transition loop, and whether it is right of and below the state's center. */
-    class LoopCorner(val corner: PointD, val right: Boolean, val below: Boolean)
+    /**
+     * A state's self-transition loop: the state's corner it goes over ([right], [below]), its far
+     * corner ([cx], [cy]), and where it meets the state's top or bottom edge ([hx]) and its side ([vy]).
+     */
+    data class LoopFrame(val right: Boolean, val below: Boolean, val cx: Double, val cy: Double, val hx: Double, val vy: Double) {
+        /** Whether the loop starts on the state's top or bottom edge: clockwise over its top-right or bottom-left corner. */
+        val startsOnTopOrBottom: Boolean get() = right != below
+
+        /** The loop's three corners, in the order it is drawn. */
+        fun corners(): MutableList<PointD> {
+            val h = PointD(hx, cy)
+            val far = PointD(cx, cy)
+            val v = PointD(cx, vy)
+            return if (startsOnTopOrBottom) mutableListOf(h, far, v) else mutableListOf(v, far, h)
+        }
+    }
 
     /**
-     * Far corner of a state's self-transition loop: its only bend point, or by default over the
-     * top-right corner. The quadrant around the state's center that holds it picks the state's
-     * corner, and it stays outside the state.
+     * The loop of a state's self-transition. Its bend points are its three corners, or only its far
+     * corner, or none for the default loop over the top-right corner. The far corner's quadrant
+     * around the state's center picks the state's corner.
      */
-    fun loopCorner(t: Transition, s: Vertex): LoopCorner {
+    fun loop(t: Transition, s: Vertex): LoopFrame {
+        val pts = t.points
         val gap = max(18.0, min(30.0, s.w / 3))
-        val p = if (t.points.size == 1) t.points[0] else PointD(s.x + s.w + gap, s.y - gap)
-        val right = p.x >= s.x + s.w / 2
-        val below = p.y > s.y + s.h / 2
-        val corner = PointD(
-            if (right) max(p.x, s.x + s.w + LOOP_MIN_GAP) else min(p.x, s.x - LOOP_MIN_GAP),
-            if (below) max(p.y, s.y + s.h + LOOP_MIN_GAP) else min(p.y, s.y - LOOP_MIN_GAP),
+        val far = if (pts.size == 1 || pts.size == 3) pts[(pts.size - 1) / 2] else PointD(s.x + s.w + gap, s.y - gap)
+        val right = far.x >= s.x + s.w / 2
+        val below = far.y > s.y + s.h / 2
+        var f = LoopFrame(
+            right, below, far.x, far.y,
+            if (right) s.x + s.w * 0.72 else s.x + s.w * 0.28,
+            if (below) s.y + s.h - min(s.h * 0.3, 22.0) else s.y + min(s.h * 0.3, 22.0),
         )
-        return LoopCorner(corner, right, below)
+        if (pts.size == 3) {
+            f = f.copy(
+                hx = (if (f.startsOnTopOrBottom) pts[0] else pts[2]).x,
+                vy = (if (f.startsOnTopOrBottom) pts[2] else pts[0]).y,
+            )
+        }
+        return clampLoop(f, s)
     }
+
+    /** Keeps a loop's far corner outside the state, and its ends on the state's edges away from the corner it goes over. */
+    fun clampLoop(f: LoopFrame, s: Vertex): LoopFrame = LoopFrame(
+        f.right,
+        f.below,
+        if (f.right) max(f.cx, s.x + s.w + LOOP_MIN_GAP) else min(f.cx, s.x - LOOP_MIN_GAP),
+        if (f.below) max(f.cy, s.y + s.h + LOOP_MIN_GAP) else min(f.cy, s.y - LOOP_MIN_GAP),
+        if (f.right) clamp(f.hx, s.x, s.x + s.w - LOOP_MIN_GAP) else clamp(f.hx, s.x + LOOP_MIN_GAP, s.x + s.w),
+        if (f.below) clamp(f.vy, s.y, s.y + s.h - LOOP_MIN_GAP) else clamp(f.vy, s.y + LOOP_MIN_GAP, s.y + s.h),
+    )
 
     /** Points of a state's self-transition loop, clockwise around the state's corner. */
     fun loopRoute(t: Transition, s: Vertex): List<PointD> {
-        val lc = loopCorner(t, s)
-        val c = lc.corner
-        val hx = if (lc.right) s.x + s.w * 0.72 else s.x + s.w * 0.28
-        val hy = if (lc.below) s.y + s.h else s.y
-        val vx = if (lc.right) s.x + s.w else s.x
-        val vy = if (lc.below) s.y + s.h - min(s.h * 0.3, 22.0) else s.y + min(s.h * 0.3, 22.0)
-        return if (lc.right == lc.below) {
-            listOf(PointD(vx, vy), PointD(c.x, vy), c, PointD(hx, c.y), PointD(hx, hy))
-        } else {
-            listOf(PointD(hx, hy), PointD(hx, c.y), c, PointD(c.x, vy), PointD(vx, vy))
-        }
+        val f = loop(t, s)
+        val onTopOrBottom = PointD(f.hx, if (f.below) s.y + s.h else s.y)
+        val onSide = PointD(if (f.right) s.x + s.w else s.x, f.vy)
+        return if (f.startsOnTopOrBottom) listOf(onTopOrBottom) + f.corners() + onSide else listOf(onSide) + f.corners() + onTopOrBottom
     }
 
     /** The polyline a transition is drawn along, or null when an end is missing. */

@@ -293,9 +293,10 @@ class FsmModel {
         if (regions.isEmpty()) regions.add(Region("r_root"))
         val types = vertices.associate { it.id to it.type }
         for (t in transitions) {
-            // A state's self-transition is a loop whose only bend point is its far corner:
-            // older free bend points go back to the default loop.
-            if (t.source == t.target && t.kind != TransitionKind.Internal && types[t.source] == VertexType.State && t.points.size > 1) {
+            // A state's self-transition is a loop whose bend points are its three corners, or only its
+            // far corner: other numbers of free bend points, from older versions, go back to the default loop.
+            val n = t.points.size
+            if (t.source == t.target && t.kind != TransitionKind.Internal && types[t.source] == VertexType.State && (n == 2 || n > 3)) {
                 t.points.clear()
                 t.labelOffset = null
             }

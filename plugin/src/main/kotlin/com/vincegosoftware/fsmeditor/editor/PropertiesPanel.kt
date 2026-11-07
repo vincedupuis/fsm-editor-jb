@@ -499,7 +499,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             "Double-click" to "empty canvas to add a state; a name or label to edit it.",
             "Drag" to "the ⊕ handle of a selected element to draw a transition.",
             "Double-click" to "a transition to add a bend point, a bend point to remove it.",
-            "Drag" to "the far corner of a selected self-transition to resize its loop or move it to another corner.",
+            "Drag" to "a corner of a selected self-transition to reshape its loop; the far corner moves it to another corner of the state.",
             "Drop" to "an element into a region to nest it.",
             "Right-drag" to "Space+drag, middle-drag or two fingers pan; the wheel or a pinch zooms; F fits.",
             "Shift+click" to "a tool keeps it active.",

@@ -532,9 +532,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         }
     }
 
-    /** The bend points to drag: the far corner of a state's self-transition loop, or the transition's bend points. */
+    /** The bend points to drag: the corners of a state's self-transition loop, or the transition's bend points. */
     private fun waypointHandles(s: DiagramSession, t: Transition): List<PointD> =
-        if (Geo.isLoop(s.index, t)) listOf(Geo.loopCorner(t, s.index.vertex(t.source)!!).corner) else t.points
+        if (Geo.isLoop(s.index, t)) Geo.loop(t, s.index.vertex(t.source)!!).corners() else t.points
 
     private fun drawTransition(g: Graphics2D, s: DiagramSession, t: Transition) {
         val ix = s.index
@@ -998,7 +998,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
                 DragKind.Waypoint -> {
                     val q = if (e.isAltDown) p else PointD(Geo.snap(p.x), Geo.snap(p.y))
-                    if (Geo.isLoop(s.index, d.transition!!)) s.moveLoopCorner(d.transition!!, q) else d.transition!!.points[d.index] = q
+                    if (Geo.isLoop(s.index, d.transition!!)) s.moveLoopCorner(d.transition!!, d.index, q) else d.transition!!.points[d.index] = q
                 }
                 DragKind.Label -> {
                     d.moved = true

@@ -311,7 +311,7 @@ class DiagramSession(model: FsmModel) {
 
     /** Adds a bend point at [p], on the segment nearest to it. */
     fun addWaypoint(t: Transition, p: PointD) {
-        if (Geometry.isLoop(index, t)) return // a self-transition loop has no bend points
+        if (Geometry.isLoop(index, t)) return // a self-transition loop has no bend points but its corners
         val pts = Geometry.route(index, t) ?: return
         if (t.points.isEmpty()) t.points = pts.subList(1, pts.size - 1).mapTo(mutableListOf()) { PointD(Num.round(it.x), Num.round(it.y)) }
         val full = Geometry.route(index, t)!!
@@ -329,17 +329,39 @@ class DiagramSession(model: FsmModel) {
         commit()
     }
 
-    /** Moves the far corner of a state's self-transition loop to [p], kept outside the state. */
-    fun moveLoopCorner(t: Transition, p: PointD) {
+    /**
+     * Drags corner [corner] (in drawing order) of a state's self-transition loop to [p]. The far
+     * corner resizes the loop and moves it to the state's corner in its quadrant; each other corner
+     * moves its leg and slides the leg's end along the state's edge. The loop then keeps its three
+     * corners as bend points.
+     */
+    fun moveLoopCorner(t: Transition, corner: Int, p: PointD) {
         val s = index.vertex(t.source) ?: return
         if (!Geometry.isLoop(index, t)) return
-        t.points = mutableListOf(p)
-        t.points = mutableListOf(Geometry.loopCorner(t, s).corner)
+        val f = Geometry.loop(t, s)
+        val moved = when {
+            corner == 1 -> {
+                val right = p.x >= s.x + s.w / 2
+                val below = p.y > s.y + s.h / 2
+                // Moved to another corner of the state, the loop is mirrored.
+                f.copy(
+                    right = right,
+                    below = below,
+                    cx = p.x,
+                    cy = p.y,
+                    hx = if (right != f.right) 2 * s.x + s.w - f.hx else f.hx,
+                    vy = if (below != f.below) 2 * s.y + s.h - f.vy else f.vy,
+                )
+            }
+            (corner == 0) == f.startsOnTopOrBottom -> f.copy(hx = p.x, cy = p.y)
+            else -> f.copy(cx = p.x, vy = p.y)
+        }
+        t.points = Geometry.clampLoop(moved, s).corners()
     }
 
     fun removeWaypoint(t: Transition, index: Int) {
         if (index < 0 || index >= t.points.size) return
-        t.points.removeAt(index)
+        if (Geometry.isLoop(this.index, t)) t.points.clear() else t.points.removeAt(index) // a loop goes back to the default
         commit()
     }
 
