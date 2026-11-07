@@ -53,7 +53,6 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import javax.swing.text.JTextComponent
-import kotlin.math.roundToInt
 
 /**
  * The properties of the selection (or of the machine when nothing is
@@ -555,14 +554,6 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
 
         if (v.type == VertexType.State) stateProps(s, v)
 
-        val owner = ix.ownerState(v)
-        put(h4("Location"))
-        val where = when {
-            owner != null -> "${if (ix.isBorderVertex(v)) "On the border of" else "Inside"} ${owner.name.ifEmpty { owner.type.title }}"
-            v.type.isPointType -> "Connection point of the state machine"
-            else -> "Top level"
-        }
-        put(muted("$where · ${v.x.roundToInt()}, ${v.y.roundToInt()} · ${v.w.roundToInt()}×${v.h.roundToInt()}"))
         issuesFor(v.id)?.let { put(it) }
     }
 
