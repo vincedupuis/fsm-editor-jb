@@ -724,30 +724,45 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
 
     // ---------------------------------------------------------------- mouse
 
-    /** The menu of a right-click on a state: it selects the state unless it is already selected. */
+    /**
+     * The menu of a right-click on an element or on empty canvas. A right-click
+     * on an element selects it unless it is already selected.
+     */
     private fun showContextMenu(s: DiagramSession, p: PointD, at: Point) {
+        if (tool != null) return
         s.reindex()
         val hit = hitTest(s, p)
-        val state = if (hit.kind == HitKind.Vertex) s.index.vertex(hit.id) else null
-        if (state == null || state.type != VertexType.State || tool != null) return
-        if (state.id !in s.selection) {
-            s.selection = linkedSetOf(state.id)
+        val id = when (hit.kind) {
+            HitKind.Vertex, HitKind.Transition, HitKind.Label, HitKind.Waypoint -> hit.id
+            HitKind.Handle -> if (s.selection.size == 1) s.selection.first() else null
+            HitKind.Empty -> null
+        }
+        if (id != null && id !in s.selection) {
+            s.selection = linkedSetOf(id)
             editor.renderProps()
             editor.renderStatus()
             repaint()
         }
-        val canAlign = s.selectionRoots().count { it.type == VertexType.State } >= 2
-        fun item(label: String, horizontally: Boolean) = object : DumbAwareAction(label) {
+        fun item(label: String, enabled: Boolean = true, run: () -> Unit) = object : DumbAwareAction(label) {
             override fun update(e: AnActionEvent) {
-                e.presentation.isEnabled = canAlign
+                e.presentation.isEnabled = enabled
             }
-            override fun actionPerformed(e: AnActionEvent) {
-                if (s.align(state.id, horizontally)) editor.renderProps()
-                repaint()
-            }
+            override fun actionPerformed(e: AnActionEvent) = run()
             override fun getActionUpdateThread() = ActionUpdateThread.EDT
         }
-        val group = DefaultActionGroup(item("Align Horizontally", true), item("Align Vertically", false))
+        val group = DefaultActionGroup()
+        val state = id?.let { s.index.vertex(it) }
+        if (state != null && state.type == VertexType.State) {
+            val canAlign = s.selectionRoots().count { it.type == VertexType.State } >= 2
+            for ((label, horizontally) in listOf("Align Horizontally" to true, "Align Vertically" to false)) {
+                group.add(item(label, canAlign) {
+                    if (s.align(state.id, horizontally)) editor.renderProps()
+                    repaint()
+                })
+            }
+            group.addSeparator()
+        }
+        group.add(item("Properties…") { editor.openPropertiesWindow(id, at) })
         ActionManager.getInstance().createActionPopupMenu("FsmDiagram", group).component.show(this, at.x, at.y)
     }
 

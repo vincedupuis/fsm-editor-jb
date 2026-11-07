@@ -16,7 +16,11 @@ import com.intellij.openapi.actionSystem.ex.CustomComponentAction
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.DumbAwareToggleAction
+import com.intellij.openapi.ui.popup.JBPopup
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.ui.popup.JBPopupListener
+import com.intellij.openapi.ui.popup.LightweightWindowEvent
+import com.intellij.ui.awt.RelativePoint
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
@@ -114,6 +118,10 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     private val propsPane: ToolPane
     private val westDock = JPanel(BorderLayout())
     private val eastDock = JPanel(BorderLayout())
+    /** The properties window opened from the context menu, its panel and the element it shows (null: the machine). */
+    private var propsPopup: JBPopup? = null
+    private var popupProps: PropertiesPanel? = null
+    private var popupId: String? = null
 
     var session: DiagramSession? = null
         private set
@@ -293,7 +301,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
                 SwingUtilities.invokeLater { canvas.fit() }
             }
             renderProps()
-        } else if (!props.hasFocusInside()) {
+        } else if (!props.hasFocusInside() && popupProps?.hasFocusInside() != true) {
             renderProps()
         }
         canvas.repaint()
@@ -311,8 +319,82 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
 
     fun issuesFor(id: String): List<Issue> = issuesById[id] ?: emptyList()
 
+    /** Rebuilds the properties panel, and the properties window if it still shows the selection. */
     fun renderProps() {
-        if (session != null) props.render()
+        val s = session
+        if (propsPopup != null) {
+            s?.reindex()
+            val id = popupId
+            val shown = s != null && if (id == null) s.selection.isEmpty()
+                else s.selection.size == 1 && id in s.selection && (s.index.vertex(id) != null || s.index.transition(id) != null)
+            if (!shown) closePropertiesWindow()
+        }
+        if (s == null) return
+        props.render()
+        popupProps?.render()
+    }
+
+    // ---------------------------------------------------------------- properties window
+
+    /** Opens the properties of element [id] (null: the machine) in a window at [at] on the canvas, selecting the element. */
+    fun openPropertiesWindow(id: String?, at: Point) {
+        closePropertiesWindow()
+        val s = session ?: return
+        s.selection = if (id != null) linkedSetOf(id) else LinkedHashSet()
+        val panel = PropertiesPanel(this).apply { border = JBUI.Borders.empty(8, 12, 12, 12) }
+        val scroll = JBScrollPane(panel).apply {
+            border = JBUI.Borders.empty()
+            horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        }
+        popupProps = panel
+        popupId = id
+        panel.render()
+        canvas.repaint()
+        renderStatus()
+        // Wrapped text measures its height at the window's width.
+        val width = JBUI.scale(300)
+        panel.setSize(width, Short.MAX_VALUE.toInt())
+        fun layOut(c: java.awt.Container) {
+            c.doLayout()
+            for (child in c.components) if (child is java.awt.Container) layOut(child)
+        }
+        layOut(panel)
+        val maxHeight = maxOf(JBUI.scale(200), (layers.height * 0.9).toInt())
+        scroll.preferredSize = Dimension(width, minOf(maxHeight, panel.preferredSize.height + JBUI.scale(4)))
+        lateinit var popup: JBPopup
+        popup = JBPopupFactory.getInstance().createComponentPopupBuilder(scroll, null)
+            .setTitle("Properties")
+            .setMovable(true)
+            .setResizable(true)
+            .setRequestFocus(true)
+            .setFocusable(true)
+            .setCancelOnClickOutside(true)
+            .setCancelKeyEnabled(true)
+            .setCancelCallback {
+                // Apply the field being edited before the window goes away.
+                if (propsPopup === popup) panel.applyFocusedField()
+                true
+            }
+            .addListener(object : JBPopupListener {
+                override fun onClosed(event: LightweightWindowEvent) {
+                    if (propsPopup !== popup) return
+                    propsPopup = null
+                    popupProps = null
+                    popupId = null
+                }
+            })
+            .createPopup()
+        propsPopup = popup
+        popup.show(RelativePoint(canvas, at))
+    }
+
+    fun closePropertiesWindow() {
+        val popup = propsPopup ?: return
+        popupProps?.applyFocusedField()
+        propsPopup = null
+        popupProps = null
+        popupId = null
+        popup.cancel()
     }
 
     fun openSubmachine(href: String) = host.openSubmachine(href)

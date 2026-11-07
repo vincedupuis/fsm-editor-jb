@@ -76,6 +76,12 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         return SwingUtilities.isDescendingFrom(owner, this)
     }
 
+    /** Applies the text field being edited in this panel, as losing the focus would. */
+    fun applyFocusedField() {
+        val owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner as? JComponent ?: return
+        if (SwingUtilities.isDescendingFrom(owner, this)) (owner.getClientProperty(APPLY_KEY) as? Runnable)?.run()
+    }
+
     fun focusFirstField() {
         findFirst(this)?.requestFocusInWindow()
     }
@@ -134,7 +140,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
 
     private fun commit(props: Boolean = false) {
         s?.commit()
-        if (props) render()
+        if (props) editor.renderProps()
     }
 
     // ---------------------------------------------------------------- building blocks
@@ -223,6 +229,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
 
     /** Applies [apply] when [tb] loses the focus, or on Enter for a single-line field. */
     private fun onCommit(tb: JTextComponent, multiline: Boolean, apply: () -> Unit) {
+        tb.putClientProperty(APPLY_KEY, Runnable { apply() })
         tb.addFocusListener(object : FocusAdapter() {
             override fun focusLost(e: FocusEvent) = apply()
         })
@@ -451,10 +458,10 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
     }
 
     private fun withColor(field: JComponent, s: DiagramSession, v: Vertex, key: String, what: String) =
-        withColor(field, v.itemColors[key] ?: "", { s.setColor(v, key, it); render() }, what)
+        withColor(field, v.itemColors[key] ?: "", { s.setColor(v, key, it); editor.renderProps() }, what)
 
     private fun withColor(field: JComponent, s: DiagramSession, t: Transition, key: String?, what: String) =
-        if (key == null) field else withColor(field, t.itemColors[key] ?: "", { s.setColor(t, key, it); render() }, what)
+        if (key == null) field else withColor(field, t.itemColors[key] ?: "", { s.setColor(t, key, it); editor.renderProps() }, what)
 
     private fun row(main: JComponent, vararg trailing: JComponent): JComponent {
         val row = JPanel(BorderLayout())
@@ -516,7 +523,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         if (group != null) {
             put(selectField("Kind", v.type.key, group.map { it.key to it.title }) { value ->
                 VertexType.parseKey(value)?.let { s.changeType(v, it) }
-                render()
+                editor.renderProps()
             })
         }
         when (v.type) {
@@ -540,10 +547,10 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         val what = if (v.type == VertexType.Comment) "the comment" else v.name.ifEmpty { "the element" }
         if (v.type == VertexType.State && v.regions.isNotEmpty()) {
             // A composite state has a color for its header and one for its regions.
-            put(colorField(v.color, { s.setColor(v, null, it); render() }, what, "Title color"))
-            put(colorField(v.itemColors["background"] ?: "", { s.setColor(v, "background", it); render() }, what, "Background color"))
+            put(colorField(v.color, { s.setColor(v, null, it); editor.renderProps() }, what, "Title color"))
+            put(colorField(v.itemColors["background"] ?: "", { s.setColor(v, "background", it); editor.renderProps() }, what, "Background color"))
         } else {
-            put(colorField(v.color, { s.setColor(v, null, it); render() }, what))
+            put(colorField(v.color, { s.setColor(v, null, it); editor.renderProps() }, what))
         }
 
         if (v.type == VertexType.State) stateProps(s, v)
@@ -588,7 +595,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         if (current.isNotEmpty() && s.machines.none { it.href == current }) options.add(current to "${s.machineLabel(current)} (not found)")
         put(selectField("Referenced state machine", current, options) {
             s.setSubmachine(v, it)
-            render()
+            editor.renderProps()
         })
         if (s.machines.isEmpty() && current.isEmpty()) put(muted("No other state machine (.fsm) was found in the project."))
         if (v.submachine.isNotEmpty()) {
@@ -608,12 +615,12 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                 }
                 put(row(tb, iconButton("Remove region and its contents") {
                     s.removeRegion(v, region.id)
-                    render()
+                    editor.renderProps()
                 }))
             }
             put(button("+ Add region", {
                 s.addRegion(v)
-                render()
+                editor.renderProps()
             }))
             if (v.regions.size > 1) {
                 put(selectField(
@@ -643,15 +650,15 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                 committed = Labels.transitionLabel(s.model, t)
                 tb.text = committed
             }
-            val colorOfInternal = colorButton(t.color, { s.setColor(t, null, it); render() }, "Color of ${Labels.transitionLabel(s.model, t).ifEmpty { "the internal transition" }}")
+            val colorOfInternal = colorButton(t.color, { s.setColor(t, null, it); editor.renderProps() }, "Color of ${Labels.transitionLabel(s.model, t).ifEmpty { "the internal transition" }}")
             put(row(tb, colorOfInternal, iconButton("Remove") {
                 s.removeTransition(t)
-                render()
+                editor.renderProps()
             }))
         }
         put(button("+ Add internal transition", {
             s.addInternalTransition(v)
-            render()
+            editor.renderProps()
         }))
     }
 
@@ -721,7 +728,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             } else {
                 smallButton("Add", "Add a reference on the border") {
                     s.addAllReferences(v, q)
-                    render()
+                    editor.renderProps()
                 }
             }
             put(row(label, action))
@@ -729,7 +736,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         if (s.freePoints(v).size > 1) {
             put(button("Add all references", {
                 s.addAllReferences(v)
-                render()
+                editor.renderProps()
             }))
         }
     }
@@ -745,9 +752,9 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             muted("${nm(src)} → ${nm(tgt)}"),
             selectField("Kind", t.kind.key, listOf("external" to "External", "local" to "Local", "internal" to "Internal")) {
                 s.setKind(t, if (it == "internal") TransitionKind.Internal else if (it == "local") TransitionKind.Local else TransitionKind.External)
-                render()
+                editor.renderProps()
             },
-            colorField(t.color, { s.setColor(t, null, it); render() }, "the transition"),
+            colorField(t.color, { s.setColor(t, null, it); editor.renderProps() }, "the transition"),
         )
         // Internal transitions drawn in their state's compartment take a single color.
         val inCompartment = t.kind == TransitionKind.Internal && t.source == t.target && src?.type == VertexType.State
@@ -787,18 +794,23 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         routing.add(JButton("Straighten").apply {
             addActionListener {
                 s.straighten(t)
-                render()
+                editor.renderProps()
             }
         })
         routing.add(JButton("Reverse").apply {
             addActionListener {
                 s.reverse(t)
-                render()
+                editor.renderProps()
             }
         })
         routing.maximumSize = Dimension(Int.MAX_VALUE, routing.preferredSize.height)
         put(routing)
         issuesFor(t.id)?.let { put(it) }
         put(button("Delete", editor::deleteSelection).apply { border = JBUI.Borders.emptyTop(12) })
+    }
+
+    private companion object {
+        /** Client property of a text field holding what applies it. */
+        const val APPLY_KEY = "fsm.apply"
     }
 }
