@@ -288,4 +288,136 @@ class EditingTest {
         assertEquals(0.3, Num.r1(0.25))
         assertEquals(-2.0, Num.round(-2.5))
     }
+    private fun addState(
+        s: DiagramSession, id: String, parent: String, x: Double, y: Double, w: Double = 140.0, h: Double = 60.0,
+        regions: Int = 0, layout: RegionLayout = RegionLayout.Vertical,
+    ): Vertex {
+        val v = Vertex(id, VertexType.State, id, parent, x, y, w, h)
+        v.regionLayout = layout
+        repeat(regions) { v.regions.add(Region(id + "_r" + it)) }
+        s.model.vertices.add(v)
+        s.reindex()
+        return v
+    }
+
+    @Test
+    fun alignsTheSelectedStatesOnTheClickedOne() {
+        val s = newSession()
+        val a = addState(s, "a", s.rootRegion, 1000.0, 1000.0)
+        val b = addState(s, "b", s.rootRegion, 1300.0, 1120.0, 100.0, 40.0)
+        val c = addState(s, "c", s.rootRegion, 1600.0, 900.0)
+        val init = s.index.vertex("v_init")!!
+        val initAt = init.x to init.y
+        s.selection = linkedSetOf(a.id, b.id, c.id, init.id)
+        var commits = 0
+        s.onCommitted { commits++ }
+        assertTrue(s.align(b.id, horizontally = true))
+        assertEquals(1, commits)
+        assertEquals(1000.0 to 1110.0, a.x to a.y)
+        assertEquals(1300.0 to 1120.0, b.x to b.y)
+        assertEquals(1600.0 to 1110.0, c.x to c.y)
+        assertTrue(s.align(a.id, horizontally = false))
+        assertEquals(1000.0 to 1110.0, a.x to a.y)
+        assertEquals(1020.0 to 1120.0, b.x to b.y)
+        assertEquals(1000.0 to 1110.0, c.x to c.y)
+        // Pseudostates are left alone, and a single state has nothing to align with.
+        assertEquals(initAt, init.x to init.y)
+        s.selection = linkedSetOf(a.id, init.id)
+        assertFalse(s.align(a.id, horizontally = true))
+    }
+
+    @Test
+    fun aligningMovesAStateWithItsContents() {
+        val s = newSession()
+        val comp = addState(s, "comp", s.rootRegion, 1000.0, 1000.0, 280.0, 190.0, regions = 1)
+        val inner = addState(s, "inner", "comp_r0", 1040.0, 1080.0)
+        val other = addState(s, "other", "comp_r0", 1100.0, 1100.0)
+        val t = Transition("t1", inner.id, other.id).also { it.points = mutableListOf(PointD(1200.0, 1060.0)) }
+        s.model.transitions.add(t)
+        val b = addState(s, "b", s.rootRegion, 1500.0, 1300.0)
+        s.selection = linkedSetOf(comp.id, inner.id, b.id)
+        assertTrue(s.align(b.id, horizontally = true))
+        assertEquals(1235.0, comp.y)
+        assertEquals(1315.0, inner.y)
+        assertEquals(1335.0, other.y)
+        assertEquals(PointD(1200.0, 1295.0), t.points[0])
+        assertEquals(280.0 to 190.0, comp.w to comp.h)
+    }
+
+    @Test
+    fun aligningGrowsTheRegionsThatNoLongerHoldTheirStates() {
+        val s = newSession()
+        val outer = addState(s, "outer", s.rootRegion, 1000.0, 1000.0, 400.0, 300.0, regions = 1)
+        val comp = addState(s, "comp", "outer_r0", 1020.0, 1050.0, 280.0, 190.0, regions = 1)
+        val inner = addState(s, "inner", "comp_r0", 1040.0, 1100.0)
+        val top = addState(s, "top", s.rootRegion, 600.0, 1500.0)
+        s.selection = linkedSetOf(inner.id, top.id)
+        assertTrue(s.align(top.id, horizontally = true))
+        assertEquals(1500.0, inner.y)
+        assertEquals("comp_r0", inner.parent)
+        assertEquals(listOf(1020.0, 1050.0, 280.0), listOf(comp.x, comp.y, comp.w))
+        assertEquals(1570.0, comp.y + comp.h)
+        assertEquals(listOf(1000.0, 1000.0, 400.0), listOf(outer.x, outer.y, outer.w))
+        assertEquals(1580.0, outer.y + outer.h)
+
+        assertTrue(s.align(top.id, horizontally = false))
+        assertEquals(600.0, inner.x)
+        assertEquals(590.0 to 1300.0, comp.x to comp.x + comp.w)
+        assertEquals(580.0 to 1400.0, outer.x to outer.x + outer.w)
+    }
+
+    @Test
+    fun aligningUpwardGrowsTheStateAboveItsHeader() {
+        val s = newSession()
+        val comp = addState(s, "comp", s.rootRegion, 1000.0, 1000.0, 280.0, 190.0, regions = 1)
+        addState(s, "inner", "comp_r0", 1040.0, 1100.0)
+        val top = addState(s, "top", s.rootRegion, 600.0, 900.0)
+        s.selection = linkedSetOf("inner", top.id)
+        assertTrue(s.align(top.id, horizontally = true))
+        val header = Geometry.headerHeight(s.model, comp)
+        assertEquals(900 - DiagramSession.FIT_MARGIN - header, comp.y, 1e-6)
+        assertEquals(1190.0, comp.y + comp.h, 1e-6)
+        assertEquals(900.0, Geometry.regionRects(s.model, comp)[0].rect.y + DiagramSession.FIT_MARGIN, 1e-6)
+    }
+
+    @Test
+    fun aligningGrowsEveryRegionOfAnOrthogonalState() {
+        val s = newSession()
+        // Stacked regions of 100 below a header: the second one holds b.
+        val orth = addState(s, "orth", s.rootRegion, 1000.0, 1000.0, 300.0, 0.0, regions = 2)
+        val header = Geometry.headerHeight(s.model, orth)
+        orth.h = header + 200
+        val a = addState(s, "a", "orth_r0", 1020.0, 1000 + header + 20)
+        val b = addState(s, "b", "orth_r1", 1020.0, 1000 + header + 120)
+        val c = addState(s, "c", s.rootRegion, 1600.0, 1000 + header + 300)
+        s.selection = linkedSetOf(b.id, c.id)
+        assertTrue(s.align(c.id, horizontally = true))
+        val rects = Geometry.regionRects(s.model, orth)
+        assertTrue(rects[0].rect.bottom >= a.y + a.h + DiagramSession.FIT_MARGIN - 1e-6)
+        assertTrue(rects[1].rect.y <= b.y - DiagramSession.FIT_MARGIN + 1e-6)
+        assertTrue(rects[1].rect.bottom >= b.y + b.h + DiagramSession.FIT_MARGIN - 1e-6)
+        assertEquals(1000.0, orth.y)
+        assertEquals(rects[0].rect.h, rects[1].rect.h, 1e-6)
+    }
+
+    @Test
+    fun statesOfStackedRegionsCannotShareARow() {
+        val s = newSession()
+        val orth = addState(s, "orth", s.rootRegion, 1000.0, 1000.0, 340.0, 250.0, regions = 2)
+        val a = addState(s, "a", "orth_r0", 1020.0, 1050.0)
+        val b = addState(s, "b", "orth_r1", 1180.0, 1160.0)
+        var message: String? = null
+        s.onMessage { message = it }
+        s.selection = linkedSetOf(a.id, b.id)
+        assertFalse(s.align(a.id, horizontally = true))
+        assertEquals("The states cannot be aligned: they would leave their regions of 'orth'.", message)
+        assertEquals(1180.0 to 1160.0, b.x to b.y)
+        assertEquals(listOf(1000.0, 1000.0, 340.0, 250.0), listOf(orth.x, orth.y, orth.w, orth.h))
+        // Side by side, the same states can share a row but not a column.
+        orth.regionLayout = RegionLayout.Horizontal
+        b.x = 1200.0
+        assertTrue(s.align(a.id, horizontally = true))
+        assertEquals(a.y, b.y)
+        assertFalse(s.align(a.id, horizontally = false))
+    }
 }

@@ -427,6 +427,129 @@ class DiagramSession(model: FsmModel) {
         return true
     }
 
+    /**
+     * Aligns the selected states (without a selected ancestor) with [anchorId]: on its horizontal center
+     * line when [horizontally], else on its vertical one. Each state moves with its contents and stays in
+     * its region; the enclosing composite states grow so that their regions still hold their states.
+     * Returns false, changing nothing, when fewer than two states are selected or when states of different
+     * regions of one state would overlap along its region layout.
+     */
+    fun align(anchorId: String, horizontally: Boolean): Boolean {
+        val states = selectionRoots().filter { it.type == VertexType.State }
+        val clicked = index.vertex(anchorId) ?: return false
+        val anchor = index.ancestors(clicked).lastOrNull { it.id in selection } ?: clicked
+        if (states.size < 2 || states.none { it === anchor }) return false
+
+        val saved = model.vertices.map { Saved(it, it.x, it.y, it.w, it.h) }
+        val savedPoints = model.transitions.map { it to it.points }
+        val moved = ArrayList<Vertex>()
+        for (v in states) {
+            val dx = if (horizontally) 0.0 else anchor.centerX - v.centerX
+            val dy = if (horizontally) anchor.centerY - v.centerY else 0.0
+            if (dx == 0.0 && dy == 0.0) continue
+            moved.add(v)
+            val group = listOf(v) + index.descendants(v)
+            for (x in group) {
+                x.x += dx
+                x.y += dy
+            }
+            val ids = group.mapTo(HashSet()) { it.id }
+            for (t in model.transitions) {
+                if (t.points.isNotEmpty() && t.source in ids && t.target in ids) {
+                    t.points = t.points.mapTo(mutableListOf()) { PointD(it.x + dx, it.y + dy) }
+                }
+            }
+        }
+        if (moved.isEmpty()) return false
+
+        // Innermost first: a state that grows may no longer fit in its own region.
+        for (s in moved.flatMap { index.ancestors(it) }.distinct().sortedByDescending { index.depth(it) }) {
+            if (fitRegions(s)) continue
+            for (r in saved) {
+                r.v.x = r.x
+                r.v.y = r.y
+                r.v.w = r.w
+                r.v.h = r.h
+            }
+            for ((t, points) in savedPoints) t.points = points
+            say("The states cannot be aligned: they would leave their regions of '${s.name}'.")
+            return false
+        }
+        commit()
+        return true
+    }
+
+    companion object {
+        /** Space kept between a region's border and its contents when [align] grows a state. */
+        const val FIT_MARGIN = 10.0
+    }
+
+    private class Saved(val v: Vertex, val x: Double, val y: Double, val w: Double, val h: Double)
+
+    /** Extent of the vertices of region [i] along one axis. */
+    private class Extent(val i: Int, val lo: Double, val hi: Double)
+
+    /** Grows [s] so that each of its regions holds its vertices; false when no size can. */
+    private fun fitRegions(s: Vertex): Boolean {
+        val n = s.regions.size
+        val boxes = ArrayList<Pair<Int, RectD>>()
+        for (i in 0 until n) {
+            val id = s.regions[i].id
+            val kids = model.vertices.filter { it.parent == id }
+            if (kids.isEmpty()) continue
+            val x0 = kids.minOf { it.x }
+            val y0 = kids.minOf { it.y }
+            boxes.add(i to RectD(x0, y0, kids.maxOf { it.x + it.w } - x0, kids.maxOf { it.y + it.h } - y0))
+        }
+        if (boxes.isEmpty()) return true
+        if (s.regionLayout == RegionLayout.Horizontal) {
+            val along = fitAlong(s.x, s.x + s.w, n, boxes.map { (i, r) -> Extent(i, r.x, r.right) }) ?: return false
+            val (x, right) = stretch(s.x, s.x + s.w, along.first, along.first + n * along.second)
+            s.x = x
+            s.w = right - x
+            val header = Geometry.headerHeight(model, s)
+            val (top, bottom) = stretch(s.y + header, s.y + s.h, boxes.minOf { it.second.y } - FIT_MARGIN, boxes.maxOf { it.second.bottom } + FIT_MARGIN)
+            s.y = top - header
+            s.h = bottom - s.y
+        } else {
+            val (left, right) = stretch(s.x, s.x + s.w, boxes.minOf { it.second.x } - FIT_MARGIN, boxes.maxOf { it.second.right } + FIT_MARGIN)
+            s.x = left
+            s.w = right - left
+            // After the width: the wrapped activities depend on it.
+            val header = Geometry.headerHeight(model, s)
+            val along = fitAlong(s.y + header, s.y + s.h, n, boxes.map { (i, r) -> Extent(i, r.y, r.bottom) }) ?: return false
+            val (top, bottom) = stretch(s.y + header, s.y + s.h, along.first, along.first + n * along.second)
+            s.y = top - header
+            s.h = bottom - s.y
+        }
+        keepPointsOnBorder(s)
+        return true
+    }
+
+    /** The extent [start0]..[end0] grown to cover [lo]..[hi], unchanged where it already does. */
+    private fun stretch(start0: Double, end0: Double, lo: Double, hi: Double): Pair<Double, Double> =
+        (if (lo < start0 - 1e-6) lo else start0) to (if (hi > end0 + 1e-6) hi else end0)
+
+    /**
+     * Start and size of [n] equal regions laid out from [start0] to [end0], grown as little as possible so
+     * that region `i` spans `[lo, hi]` with the margin; null when the extents overlap so that no size fits them.
+     */
+    private fun fitAlong(start0: Double, end0: Double, n: Int, items: List<Extent>): Pair<Double, Double>? {
+        // Region i spans [start + i * size, start + (i + 1) * size]. Upper bounds: start + j * size <= a;
+        // lower bounds: start + (k + 1) * size >= b. The first and last ones keep the old extent.
+        val uppers = listOf(0 to start0) + items.map { it.i to it.lo - FIT_MARGIN }
+        val lowers = listOf(n - 1 to end0) + items.map { it.i to it.hi + FIT_MARGIN }
+        // Each pair bounds the size from below when the lower bound's region doesn't come before the upper one's.
+        var size = max(0.0, (end0 - start0) / n)
+        for ((j, a) in uppers) {
+            for ((k, b) in lowers) {
+                if (k + 1 > j) size = max(size, (b - a) / (k + 1 - j))
+            }
+        }
+        val start = uppers.minOf { (j, a) -> a - j * size }
+        return if (lowers.all { (k, b) -> start + (k + 1) * size >= b - 1e-6 }) start to size else null
+    }
+
     /** Selected elements without a selected ancestor, which lead a move. */
     fun selectionRoots(): List<Vertex> =
         selection.mapNotNull { index.vertex(it) }.filter { v -> index.ancestors(v).none { it.id in selection } }

@@ -1,8 +1,13 @@
 package com.vincegosoftware.fsmeditor.editor
 
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataSink
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.PlatformDataKeys
 import com.intellij.openapi.actionSystem.UiDataProvider
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.util.ui.JBFont
 import com.vincegosoftware.fsmeditor.core.DiagramSession
@@ -719,6 +724,33 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
 
     // ---------------------------------------------------------------- mouse
 
+    /** The menu of a right-click on a state: it selects the state unless it is already selected. */
+    private fun showContextMenu(s: DiagramSession, p: PointD, at: Point) {
+        s.reindex()
+        val hit = hitTest(s, p)
+        val state = if (hit.kind == HitKind.Vertex) s.index.vertex(hit.id) else null
+        if (state == null || state.type != VertexType.State || tool != null) return
+        if (state.id !in s.selection) {
+            s.selection = linkedSetOf(state.id)
+            editor.renderProps()
+            editor.renderStatus()
+            repaint()
+        }
+        val canAlign = s.selectionRoots().count { it.type == VertexType.State } >= 2
+        fun item(label: String, horizontally: Boolean) = object : DumbAwareAction(label) {
+            override fun update(e: AnActionEvent) {
+                e.presentation.isEnabled = canAlign
+            }
+            override fun actionPerformed(e: AnActionEvent) {
+                if (s.align(state.id, horizontally)) editor.renderProps()
+                repaint()
+            }
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+        }
+        val group = DefaultActionGroup(item("Align Horizontally", true), item("Align Vertically", false))
+        ActionManager.getInstance().createActionPopupMenu("FsmDiagram", group).component.show(this, at.x, at.y)
+    }
+
     private enum class DragKind { Pan, Move, Resize, Connect, Waypoint, Label, Band }
 
     private class Moved(val v: Vertex, val x0: Double, val y0: Double)
@@ -750,6 +782,8 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         var offset0 = PointD(0.0, 0.0)
         var additive = false
         var base: Set<String> = emptySet()
+        /** A right-button pan, which opens the context menu when the pointer doesn't move. */
+        var rightButton = false
     }
 
     private fun additive(e: InputEvent) = e.isShiftDown || e.isControlDown || e.isMetaDown
@@ -766,6 +800,8 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     it.screenStart = e.point
                     it.viewX0 = viewX
                     it.viewY0 = viewY
+                    it.start = p
+                    it.rightButton = SwingUtilities.isRightMouseButton(e) && !space
                 }
                 cursor = Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
                 return
@@ -871,6 +907,8 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             val d = drag ?: return
             when (d.kind) {
                 DragKind.Pan -> {
+                    if (!d.moved && e.point.distance(d.screenStart) < 3) return
+                    d.moved = true
                     setView(d.viewX0 + e.x - d.screenStart.x, d.viewY0 + e.y - d.screenStart.y, zoom)
                     return
                 }
@@ -965,7 +1003,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             drag = null
             cursor = if (tool != null) Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR) else null
             when (d.kind) {
-                DragKind.Pan -> repaint()
+                DragKind.Pan -> {
+                    if (d.rightButton && !d.moved) showContextMenu(s, d.start, e.point)
+                    repaint()
+                }
                 DragKind.Move -> {
                     if (!d.moved) {
                         if (d.clickedId != null) {
