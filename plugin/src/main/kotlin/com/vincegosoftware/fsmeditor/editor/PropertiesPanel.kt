@@ -60,8 +60,7 @@ import kotlin.math.roundToInt
  * selected). Text is checked against the grammar as it is committed:
  * invalid text is refused and stays in the field, marked, until fixed.
  */
-/** In the properties window ([inWindow]), Delete is left to the context menu. */
-class PropertiesPanel(private val editor: EditorPanel, private val inWindow: Boolean = false) : EditorPanel.WidthTrackingPanel() {
+class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTrackingPanel() {
     private var rendering = false
 
     init {
@@ -115,7 +114,6 @@ class PropertiesPanel(private val editor: EditorPanel, private val inWindow: Boo
         val ids = s.selection.toList()
         if (ids.size > 1) {
             put(h3("${ids.size} elements selected"))
-            put(button("Delete", editor::deleteSelection))
             put(muted("Drag to move them together. Ctrl+D duplicates, Ctrl+C and Ctrl+V copy between diagrams."))
             return
         }
@@ -565,7 +563,6 @@ class PropertiesPanel(private val editor: EditorPanel, private val inWindow: Boo
         }
         put(muted("$where · ${v.x.roundToInt()}, ${v.y.roundToInt()} · ${v.w.roundToInt()}×${v.h.roundToInt()}"))
         issuesFor(v.id)?.let { put(it) }
-        if (!inWindow) put(button("Delete", editor::deleteSelection).apply { border = JBUI.Borders.emptyTop(12) })
     }
 
     private fun stateProps(s: DiagramSession, v: Vertex) {
@@ -807,7 +804,6 @@ class PropertiesPanel(private val editor: EditorPanel, private val inWindow: Boo
         routing.maximumSize = Dimension(Int.MAX_VALUE, routing.preferredSize.height)
         put(routing)
         issuesFor(t.id)?.let { put(it) }
-        if (!inWindow) put(button("Delete", editor::deleteSelection).apply { border = JBUI.Borders.emptyTop(12) })
     }
 
     private companion object {

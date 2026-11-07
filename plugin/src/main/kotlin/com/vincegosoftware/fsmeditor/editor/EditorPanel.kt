@@ -341,7 +341,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         closePropertiesWindow()
         val s = session ?: return
         s.selection = if (id != null) linkedSetOf(id) else LinkedHashSet()
-        val panel = PropertiesPanel(this, inWindow = true).apply { border = JBUI.Borders.empty(8, 12, 12, 12) }
+        val panel = PropertiesPanel(this).apply { border = JBUI.Borders.empty(8, 12, 12, 12) }
         val scroll = JBScrollPane(panel).apply {
             border = JBUI.Borders.empty()
             horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
