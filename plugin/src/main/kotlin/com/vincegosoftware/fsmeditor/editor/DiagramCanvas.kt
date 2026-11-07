@@ -762,6 +762,13 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             }
             group.addSeparator()
         }
+        if (id != null) {
+            group.add(item("Delete") {
+                editor.deleteSelection()
+                repaint()
+            })
+            group.addSeparator()
+        }
         group.add(item("Properties…") { editor.openPropertiesWindow(id, at) })
         ActionManager.getInstance().createActionPopupMenu("FsmDiagram", group).component.show(this, at.x, at.y)
     }

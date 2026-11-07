@@ -60,7 +60,8 @@ import kotlin.math.roundToInt
  * selected). Text is checked against the grammar as it is committed:
  * invalid text is refused and stays in the field, marked, until fixed.
  */
-class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTrackingPanel() {
+/** In the properties window ([inWindow]), Delete is left to the context menu. */
+class PropertiesPanel(private val editor: EditorPanel, private val inWindow: Boolean = false) : EditorPanel.WidthTrackingPanel() {
     private var rendering = false
 
     init {
@@ -564,7 +565,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         }
         put(muted("$where · ${v.x.roundToInt()}, ${v.y.roundToInt()} · ${v.w.roundToInt()}×${v.h.roundToInt()}"))
         issuesFor(v.id)?.let { put(it) }
-        put(button("Delete", editor::deleteSelection).apply { border = JBUI.Borders.emptyTop(12) })
+        if (!inWindow) put(button("Delete", editor::deleteSelection).apply { border = JBUI.Borders.emptyTop(12) })
     }
 
     private fun stateProps(s: DiagramSession, v: Vertex) {
@@ -806,7 +807,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         routing.maximumSize = Dimension(Int.MAX_VALUE, routing.preferredSize.height)
         put(routing)
         issuesFor(t.id)?.let { put(it) }
-        put(button("Delete", editor::deleteSelection).apply { border = JBUI.Borders.emptyTop(12) })
+        if (!inWindow) put(button("Delete", editor::deleteSelection).apply { border = JBUI.Borders.emptyTop(12) })
     }
 
     private companion object {
