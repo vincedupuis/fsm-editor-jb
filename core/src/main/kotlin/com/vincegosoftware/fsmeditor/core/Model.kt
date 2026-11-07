@@ -291,6 +291,15 @@ class FsmModel {
     fun normalize(): FsmModel {
         if (id.isEmpty()) id = "sm"
         if (regions.isEmpty()) regions.add(Region("r_root"))
+        val types = vertices.associate { it.id to it.type }
+        for (t in transitions) {
+            // A state's self-transition is a loop whose only bend point is its far corner:
+            // older free bend points go back to the default loop.
+            if (t.source == t.target && t.kind != TransitionKind.Internal && types[t.source] == VertexType.State && t.points.size > 1) {
+                t.points.clear()
+                t.labelOffset = null
+            }
+        }
         return this
     }
 

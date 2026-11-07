@@ -420,4 +420,26 @@ class EditingTest {
         assertEquals(a.y, b.y)
         assertFalse(s.align(a.id, horizontally = false))
     }
+
+    @Test
+    fun selfTransitionLoopsGoOverTheCornerOfTheirFarCorner() {
+        val s = newSession()
+        val a = addState(s, "a", s.rootRegion, 100.0, 100.0)
+        val t = Transition("t1", a.id, a.id)
+        s.model.transitions.add(t)
+        s.reindex()
+        fun route() = Geometry.route(s.index, t)!!.joinToString(" ") { "${Num.format(Math.round(it.x * 10) / 10.0)},${Num.format(Math.round(it.y * 10) / 10.0)}" }
+        assertEquals("200.8,100 200.8,70 270,70 270,118 240,118", route())
+        s.moveLoopCorner(t, PointD(300.0, 250.0))
+        assertEquals("240,142 300,142 300,250 200.8,250 200.8,160", route())
+        s.moveLoopCorner(t, PointD(20.0, 250.0))
+        assertEquals("139.2,160 139.2,250 20,250 20,142 100,142", route())
+        s.moveLoopCorner(t, PointD(20.0, 20.0))
+        assertEquals("100,118 20,118 20,20 139.2,20 139.2,100", route())
+        // Inside the state, the far corner is pushed out.
+        s.moveLoopCorner(t, PointD(180.0, 120.0))
+        assertEquals(listOf(PointD(250.0, 90.0)), t.points)
+        s.addWaypoint(t, PointD(250.0, 100.0))
+        assertEquals(1, t.points.size)
+    }
 }

@@ -151,13 +151,58 @@ object Geometry {
         }
     }
 
+    /** An external or local self-transition of a state: a loop with three right angles over one of its corners. */
+    fun isLoop(ix: ModelIndex, t: Transition): Boolean {
+        if (t.source != t.target || t.kind == TransitionKind.Internal) return false
+        return ix.vertex(t.source)?.type == VertexType.State
+    }
+
+    /** Smallest distance between a state and the far corner of its self-transition loop. */
+    const val LOOP_MIN_GAP = 10.0
+
+    /** Far corner of a state's self-transition loop, and whether it is right of and below the state's center. */
+    class LoopCorner(val corner: PointD, val right: Boolean, val below: Boolean)
+
+    /**
+     * Far corner of a state's self-transition loop: its only bend point, or by default over the
+     * top-right corner. The quadrant around the state's center that holds it picks the state's
+     * corner, and it stays outside the state.
+     */
+    fun loopCorner(t: Transition, s: Vertex): LoopCorner {
+        val gap = max(18.0, min(30.0, s.w / 3))
+        val p = if (t.points.size == 1) t.points[0] else PointD(s.x + s.w + gap, s.y - gap)
+        val right = p.x >= s.x + s.w / 2
+        val below = p.y > s.y + s.h / 2
+        val corner = PointD(
+            if (right) max(p.x, s.x + s.w + LOOP_MIN_GAP) else min(p.x, s.x - LOOP_MIN_GAP),
+            if (below) max(p.y, s.y + s.h + LOOP_MIN_GAP) else min(p.y, s.y - LOOP_MIN_GAP),
+        )
+        return LoopCorner(corner, right, below)
+    }
+
+    /** Points of a state's self-transition loop, clockwise around the state's corner. */
+    fun loopRoute(t: Transition, s: Vertex): List<PointD> {
+        val lc = loopCorner(t, s)
+        val c = lc.corner
+        val hx = if (lc.right) s.x + s.w * 0.72 else s.x + s.w * 0.28
+        val hy = if (lc.below) s.y + s.h else s.y
+        val vx = if (lc.right) s.x + s.w else s.x
+        val vy = if (lc.below) s.y + s.h - min(s.h * 0.3, 22.0) else s.y + min(s.h * 0.3, 22.0)
+        return if (lc.right == lc.below) {
+            listOf(PointD(vx, vy), PointD(c.x, vy), c, PointD(hx, c.y), PointD(hx, hy))
+        } else {
+            listOf(PointD(hx, hy), PointD(hx, c.y), c, PointD(c.x, vy), PointD(vx, vy))
+        }
+    }
+
     /** The polyline a transition is drawn along, or null when an end is missing. */
     fun route(ix: ModelIndex, t: Transition): List<PointD>? {
         val s = ix.vertex(t.source) ?: return null
         val g = ix.vertex(t.target) ?: return null
+        if (isLoop(ix, t)) return loopRoute(t, s)
         val pts = t.points
         if (s === g && pts.isEmpty()) {
-            // Self transition: a loop over the top-right corner.
+            // Other self transitions: a loop over the top-right corner.
             val gap = max(18.0, min(30.0, s.w / 3))
             val a = PointD(s.x + s.w * 0.72, s.y - gap)
             val b = PointD(s.x + s.w + gap, s.y - gap)

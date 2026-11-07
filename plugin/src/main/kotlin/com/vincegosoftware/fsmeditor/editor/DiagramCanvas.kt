@@ -532,6 +532,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         }
     }
 
+    /** The bend points to drag: the far corner of a state's self-transition loop, or the transition's bend points. */
+    private fun waypointHandles(s: DiagramSession, t: Transition): List<PointD> =
+        if (Geo.isLoop(s.index, t)) listOf(Geo.loopCorner(t, s.index.vertex(t.source)!!).corner) else t.points
+
     private fun drawTransition(g: Graphics2D, s: DiagramSession, t: Transition) {
         val ix = s.index
         if (!Geo.isDrawn(ix, t)) return
@@ -567,7 +571,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             if (box != null) labels.add(box to t.id)
         }
         if (selected && s.selection.size == 1) {
-            for (p in t.points) {
+            for (p in waypointHandles(s, t)) {
                 val dot = Ellipse2D.Double(p.x - 4.5, p.y - 4.5, 9.0, 9.0)
                 g.color = th.background
                 g.fill(dot)
@@ -668,7 +672,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             }
             val selected = ix.transition(s.selection.first())
             if (selected != null) {
-                for ((i, wp) in selected.points.withIndex()) {
+                for ((i, wp) in waypointHandles(s, selected).withIndex()) {
                     if (Geo.dist(p, wp) <= 4.5 + tolerance) return Hit(HitKind.Waypoint, selected.id, index = i)
                 }
             }
@@ -992,7 +996,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     d.hover = connectTargetAt(s, p, d.source!!)
                     if (d.hover != null && s.index.vertex(d.hover) == null) d.hover = null
                 }
-                DragKind.Waypoint -> d.transition!!.points[d.index] = if (e.isAltDown) p else PointD(Geo.snap(p.x), Geo.snap(p.y))
+                DragKind.Waypoint -> {
+                    val q = if (e.isAltDown) p else PointD(Geo.snap(p.x), Geo.snap(p.y))
+                    if (Geo.isLoop(s.index, d.transition!!)) s.moveLoopCorner(d.transition!!, q) else d.transition!!.points[d.index] = q
+                }
                 DragKind.Label -> {
                     d.moved = true
                     d.transition!!.labelOffset = PointD(Num.round(d.offset0.x + p.x - d.start.x), Num.round(d.offset0.y + p.y - d.start.y))

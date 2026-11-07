@@ -311,6 +311,7 @@ class DiagramSession(model: FsmModel) {
 
     /** Adds a bend point at [p], on the segment nearest to it. */
     fun addWaypoint(t: Transition, p: PointD) {
+        if (Geometry.isLoop(index, t)) return // a self-transition loop has no bend points
         val pts = Geometry.route(index, t) ?: return
         if (t.points.isEmpty()) t.points = pts.subList(1, pts.size - 1).mapTo(mutableListOf()) { PointD(Num.round(it.x), Num.round(it.y)) }
         val full = Geometry.route(index, t)!!
@@ -326,6 +327,14 @@ class DiagramSession(model: FsmModel) {
         t.points.add(best, PointD(Geometry.snap(p.x), Geometry.snap(p.y)))
         selection = linkedSetOf(t.id)
         commit()
+    }
+
+    /** Moves the far corner of a state's self-transition loop to [p], kept outside the state. */
+    fun moveLoopCorner(t: Transition, p: PointD) {
+        val s = index.vertex(t.source) ?: return
+        if (!Geometry.isLoop(index, t)) return
+        t.points = mutableListOf(p)
+        t.points = mutableListOf(Geometry.loopCorner(t, s).corner)
     }
 
     fun removeWaypoint(t: Transition, index: Int) {
