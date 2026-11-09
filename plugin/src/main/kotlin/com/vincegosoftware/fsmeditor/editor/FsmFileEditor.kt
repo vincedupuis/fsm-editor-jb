@@ -55,7 +55,7 @@ class FsmFileEditor(private val project: Project, private val file: VirtualFile)
     private val panel = EditorPanel(this)
     private val syncAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private var generation = 0
-    /** The last XMI this editor wrote, with the model it came from. */
+    /** The XMI the diagram shows (the last one this editor wrote or loaded), with its model. */
     private var echoText: String? = null
     private var echoModel: FsmModel? = null
 
@@ -99,6 +99,7 @@ class FsmFileEditor(private val project: Project, private val file: VirtualFile)
             error = e.message
         }
         if (model == null) {
+            echoText = null
             panel.update(null, emptyList(), error, null, null)
             return
         }
@@ -111,6 +112,12 @@ class FsmFileEditor(private val project: Project, private val file: VirtualFile)
             .expireWith(this)
             .finishOnUiThread(ModalityState.any()) { r ->
                 if (gen != generation) return@finishOnUiThread // a newer sync is on its way
+                if (!echo) {
+                    // The diagram now shows this text: a later change back to the last text written,
+                    // such as a redo after an undo, is not our own edit.
+                    echoText = text
+                    echoModel = model.copy()
+                }
                 panel.update(if (echo) null else model, r.issues, null, r.submachines, r.machines)
             }
             .submit(AppExecutorUtil.getAppExecutorService())

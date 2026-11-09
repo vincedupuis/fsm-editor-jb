@@ -67,7 +67,8 @@ class FsmEditorTest : BasePlatformTestCase() {
 
         val state = session.createVertex("state", PointD(500.0, 300.0))!!
         assertTrue(document.text.contains("name=\"${state.name}\""))
-        assertEquals(Xmi.toXmi(session.model), document.text)
+        val edited = Xmi.toXmi(session.model)
+        assertEquals(edited, document.text)
 
         val undo = UndoManager.getInstance(project)
         assertTrue(undo.isUndoAvailable(editor))
@@ -75,6 +76,12 @@ class FsmEditorTest : BasePlatformTestCase() {
         assertEquals(original, document.text)
         // The diagram follows the document.
         waitFor { session.model.vertices.none { it.id == state.id } }
+
+        // A redo brings back the text this editor wrote, which the diagram shows again.
+        assertTrue(undo.isRedoAvailable(editor))
+        undo.redo(editor)
+        assertEquals(edited, document.text)
+        waitFor { session.model.vertices.any { it.id == state.id } }
     }
 
     fun testTextChangesReachTheDiagram() {
