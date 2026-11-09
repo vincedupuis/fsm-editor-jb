@@ -284,20 +284,8 @@ class DiagramSession(model: FsmModel) {
             commit()
             return null
         }
-        if (source.type == VertexType.ConnectionPointRef && source.pointKind == PointKind.Entry) {
-            say("An entry reference only receives transitions; execution continues inside the submachine.")
-            return null
-        }
-        if (target.type == VertexType.ConnectionPointRef && target.pointKind == PointKind.Exit) {
-            say("An exit reference only has outgoing transitions; it is reached when the submachine exits.")
-            return null
-        }
-        if (source.type == VertexType.Final || source.type == VertexType.Terminate) {
-            say("A ${source.type.title.lowercase()} cannot have outgoing transitions.")
-            return null
-        }
-        if (target.type == VertexType.Initial) {
-            say("An initial pseudostate cannot be the target of a transition.")
+        connectProblem(source, target)?.let {
+            say(it)
             return null
         }
         val t = Transition(newId("t"), source.id, target.id)
@@ -305,6 +293,36 @@ class DiagramSession(model: FsmModel) {
         selection = linkedSetOf(t.id)
         commit()
         return t
+    }
+
+    /** Why a transition can't go from [source] to [target], or null when it can. */
+    private fun connectProblem(source: Vertex, target: Vertex): String? = when {
+        source.type == VertexType.ConnectionPointRef && source.pointKind == PointKind.Entry ->
+            "An entry reference only receives transitions; execution continues inside the submachine."
+        target.type == VertexType.ConnectionPointRef && target.pointKind == PointKind.Exit ->
+            "An exit reference only has outgoing transitions; it is reached when the submachine exits."
+        source.type == VertexType.Final || source.type == VertexType.Terminate ->
+            "A ${source.type.title.lowercase()} cannot have outgoing transitions."
+        target.type == VertexType.Initial -> "An initial pseudostate cannot be the target of a transition."
+        else -> null
+    }
+
+    /**
+     * Moves the source ([atSource]) or the target of [t] to [v]. Its bend points stay, unless it
+     * becomes or stops being a state's self-transition loop, whose bend points are its corners.
+     */
+    fun reconnect(t: Transition, atSource: Boolean, v: Vertex) {
+        if ((if (atSource) t.source else t.target) == v.id) return
+        val source = if (atSource) v else (index.vertex(t.source) ?: return)
+        val target = if (atSource) (index.vertex(t.target) ?: return) else v
+        connectProblem(source, target)?.let {
+            say(it)
+            return
+        }
+        val wasLoop = Geometry.isLoop(index, t)
+        if (atSource) t.source = v.id else t.target = v.id
+        if (Geometry.isLoop(index, t) != wasLoop) t.points.clear()
+        commit()
     }
 
     // ---------------------------------------------------------------- transitions

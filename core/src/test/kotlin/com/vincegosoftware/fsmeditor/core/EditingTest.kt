@@ -422,6 +422,38 @@ class EditingTest {
     }
 
     @Test
+    fun reconnectMovesATransitionsEnds() {
+        val s = newSession()
+        val messages = ArrayList<String>()
+        s.onMessage { messages.add(it) }
+        val a = addState(s, "a", s.rootRegion, 100.0, 100.0)
+        val b = addState(s, "b", s.rootRegion, 400.0, 100.0)
+        val c = addState(s, "c", s.rootRegion, 400.0, 300.0)
+        val t = Transition("t1", a.id, b.id)
+        t.points.add(PointD(300.0, 50.0))
+        s.model.transitions.add(t)
+        s.reindex()
+        var commits = 0
+        s.onCommitted { commits++ }
+        // Bend points stay.
+        s.reconnect(t, false, c)
+        assertEquals(Triple(a.id, c.id, 1), Triple(t.source, t.target, t.points.size))
+        // Invalid ends are refused.
+        s.reconnect(t, false, s.index.vertex("v_init")!!)
+        assertEquals(c.id, t.target)
+        assertEquals(listOf("An initial pseudostate cannot be the target of a transition."), messages)
+        // Becoming a loop drops the bend points, which would be its corners.
+        s.reconnect(t, true, c)
+        assertEquals(Triple(c.id, c.id, 0), Triple(t.source, t.target, t.points.size))
+        s.moveLoopCorner(t, 1, PointD(600.0, 400.0))
+        s.reconnect(t, true, a)
+        assertEquals(Triple(a.id, c.id, 0), Triple(t.source, t.target, t.points.size))
+        // The same end is no change.
+        s.reconnect(t, true, a)
+        assertEquals(3, commits)
+    }
+
+    @Test
     fun selfTransitionLoopsAreReshapedByTheirCorners() {
         val s = newSession()
         val a = addState(s, "a", s.rootRegion, 100.0, 100.0)

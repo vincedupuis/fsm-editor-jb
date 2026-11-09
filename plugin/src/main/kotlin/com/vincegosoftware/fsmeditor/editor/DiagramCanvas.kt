@@ -579,6 +579,17 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 g.stroke = th.stroke(1.5)
                 g.draw(dot)
             }
+            // Its ends: dragged onto another element, they reconnect it.
+            if (!(drag?.kind == DragKind.Reconnect && drag?.transition === t)) {
+                for (p in listOf(pts.first(), pts.last())) {
+                    val dot = Ellipse2D.Double(p.x - 4.5, p.y - 4.5, 9.0, 9.0)
+                    g.color = th.accent
+                    g.fill(dot)
+                    g.color = th.background
+                    g.stroke = th.stroke(1.0)
+                    g.draw(dot)
+                }
+            }
         }
     }
 
@@ -629,6 +640,18 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             val to = if (target != null) Geo.clip(target, from) else cur
             g.line(th.stroke(1.5, floatArrayOf(5f, 3f)), accent, from.x, from.y, to.x, to.y)
         }
+        if (d?.kind == DragKind.Reconnect && cur != null) {
+            // From the bend point next to the dragged end, or from the element at the other end.
+            val t = d.transition!!
+            val pts = if (Geo.isLoop(s.index, t)) emptyList() else t.points
+            val target = d.hover?.let { s.index.vertex(it) }
+            val toward = target?.center ?: cur
+            val near = if (d.atSource) pts.firstOrNull() else pts.lastOrNull()
+            val fixed = s.index.vertex(if (d.atSource) t.target else t.source)
+            val from = near ?: fixed?.let { Geo.clip(it, toward) } ?: toward
+            val to = if (target != null) Geo.clip(target, from) else cur
+            g.line(th.stroke(1.5, floatArrayOf(5f, 3f)), accent, from.x, from.y, to.x, to.y)
+        }
         if (d?.kind == DragKind.Band && cur != null) {
             val r = RectD.fromPoints(d.start, cur)
             val rect = Rectangle2D.Double(r.x, r.y, r.w, r.h)
@@ -647,9 +670,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
 
     // ---------------------------------------------------------------- hit testing
 
-    private enum class HitKind { Empty, Handle, Waypoint, Label, Vertex, Transition }
+    private enum class HitKind { Empty, Handle, Waypoint, End, Label, Vertex, Transition }
 
-    private class Hit(val kind: HitKind, val id: String = "", val handle: String = "", val index: Int = 0)
+    /** [atSource]: for an end, its source end rather than its target end. */
+    private class Hit(val kind: HitKind, val id: String = "", val handle: String = "", val index: Int = 0, val atSource: Boolean = false)
 
     private fun hitTest(s: DiagramSession, p: PointD): Hit {
         val ix = s.index
@@ -671,6 +695,11 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
             }
             val selected = ix.transition(s.selection.first())
+            val route = if (selected != null && Geo.isDrawn(ix, selected)) Geo.route(ix, selected) else null
+            if (selected != null && route != null) {
+                if (Geo.dist(p, route.last()) <= 4.5 + tolerance) return Hit(HitKind.End, selected.id)
+                if (Geo.dist(p, route.first()) <= 4.5 + tolerance) return Hit(HitKind.End, selected.id, atSource = true)
+            }
             if (selected != null) {
                 for ((i, wp) in waypointHandles(s, selected).withIndex()) {
                     if (Geo.dist(p, wp) <= 4.5 + tolerance) return Hit(HitKind.Waypoint, selected.id, index = i)
@@ -726,6 +755,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         return null
     }
 
+    /** The topmost state or pseudostate at [p], through transitions and comments. */
+    private fun reconnectTargetAt(s: DiagramSession, p: PointD): String? =
+        Geo.drawingOrder(s.index).lastOrNull { it.type != VertexType.Comment && contains(it, p) }?.id
+
     // ---------------------------------------------------------------- mouse
 
     /**
@@ -737,7 +770,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         s.reindex()
         val hit = hitTest(s, p)
         val id = when (hit.kind) {
-            HitKind.Vertex, HitKind.Transition, HitKind.Label, HitKind.Waypoint -> hit.id
+            HitKind.Vertex, HitKind.Transition, HitKind.Label, HitKind.Waypoint, HitKind.End -> hit.id
             HitKind.Handle -> if (s.selection.size == 1) s.selection.first() else null
             HitKind.Empty -> null
         }
@@ -777,7 +810,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         ActionManager.getInstance().createActionPopupMenu("FsmDiagram", group).component.show(this, at.x, at.y)
     }
 
-    private enum class DragKind { Pan, Move, Resize, Connect, Waypoint, Label, Band }
+    private enum class DragKind { Pan, Move, Resize, Connect, Waypoint, Reconnect, Label, Band }
 
     private class Moved(val v: Vertex, val x0: Double, val y0: Double)
 
@@ -805,6 +838,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         var hover: String? = null
         var transition: Transition? = null
         var index = 0
+        var atSource = false
         var offset0 = PointD(0.0, 0.0)
         var additive = false
         var base: Set<String> = emptySet()
@@ -889,6 +923,11 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 HitKind.Waypoint -> drag = DragState(DragKind.Waypoint).also {
                     it.transition = s.index.transition(hit.id)
                     it.index = hit.index
+                }
+                HitKind.End -> drag = DragState(DragKind.Reconnect).also {
+                    it.transition = s.index.transition(hit.id)
+                    it.atSource = hit.atSource
+                    it.cur = p
                 }
                 HitKind.Label -> {
                     val t = s.index.transition(hit.id)!!
@@ -996,6 +1035,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     d.hover = connectTargetAt(s, p, d.source!!)
                     if (d.hover != null && s.index.vertex(d.hover) == null) d.hover = null
                 }
+                DragKind.Reconnect -> {
+                    d.cur = p
+                    d.hover = reconnectTargetAt(s, p)
+                }
                 DragKind.Waypoint -> {
                     val q = if (e.isAltDown) p else PointD(Geo.snap(p.x), Geo.snap(p.y))
                     if (Geo.isLoop(s.index, d.transition!!)) s.moveLoopCorner(d.transition!!, d.index, q) else d.transition!!.points[d.index] = q
@@ -1061,6 +1104,14 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     }
                     repaint()
                     toolDone()
+                }
+                DragKind.Reconnect -> {
+                    val target = reconnectTargetAt(s, toWorld(e.point))?.let { s.index.vertex(it) }
+                    if (target != null) {
+                        s.reconnect(d.transition!!, d.atSource, target)
+                        editor.renderProps()
+                    }
+                    repaint()
                 }
                 DragKind.Band -> {
                     editor.renderProps()
@@ -1147,6 +1198,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 "resize-se" -> Cursor.SE_RESIZE_CURSOR
                 else -> Cursor.CROSSHAIR_CURSOR
             })
+            HitKind.End -> Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR)
             HitKind.Waypoint, HitKind.Label -> Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
             else -> null
         }
@@ -1169,7 +1221,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 else editor.startInlineEdit(v.id)
             }
             HitKind.Empty -> create("state", p)
-            HitKind.Handle -> {}
+            HitKind.Handle, HitKind.End -> {}
         }
         repaint()
     }
