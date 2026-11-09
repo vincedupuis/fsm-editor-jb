@@ -873,7 +873,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 return
             }
             s.reindex()
-            val hit = hitTest(s, p)
+            var hit = hitTest(s, p)
 
             val armed = tool
             if (armed != null) {
@@ -900,6 +900,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 repaint()
                 return
             }
+
+            // A composite state moves by its title bar: its regions are empty canvas, for a selection band.
+            if (hit.kind == HitKind.Vertex && Geo.regionRects(s.model, s.index.vertex(hit.id)!!).any { it.rect.contains(p) }) hit = Hit(HitKind.Empty)
 
             when (hit.kind) {
                 HitKind.Handle -> {

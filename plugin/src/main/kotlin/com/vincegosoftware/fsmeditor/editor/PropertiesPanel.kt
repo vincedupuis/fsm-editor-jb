@@ -501,6 +501,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             "Drag" to "an end of a selected transition onto another element to reconnect it.",
             "Drag" to "a corner of a selected self-transition to reshape its loop; the far corner moves it to another corner of the state.",
             "Drop" to "an element into a region to nest it.",
+            "Drag" to "a composite state by its title bar; dragging inside its regions selects what it encloses.",
             "Right-drag" to "Space+drag, middle-drag or two fingers pan; the wheel or a pinch zooms; F fits.",
             "Shift+click" to "a tool keeps it active.",
             "Label syntax" to if (m.kind == MachineKind.Protocol) "[isReady()] event / [isDone()]" else "event, after(2s) [isReady() && !isBusy()] / doIt(); log()",
