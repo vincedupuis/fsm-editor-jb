@@ -27,7 +27,7 @@ scripts/fetch-cli.sh [--all]  # copy the fsm CLI + templates into plugin/cli/<pl
 
 ## Project rules
 
-- Keep parity with the VS Code and Visual Studio editions: text grammar, validation rules and messages, XMI output, clipboard JSON. `core/src/test/resources/fixtures` holds reference results from VS Code; regenerate them (see fixtures/README.md) when the reference changes, and add a parity case for any format or rule change.
+- Keep parity with the VS Code and Visual Studio editions: text grammar, validation rules and messages, XMI output, clipboard JSON. `core/src/test/resources/fixtures` holds reference results from VS Code, the same as the Visual Studio edition's. Regenerate them from the umbrella repo with `node parity/fixtures.mjs` when the reference changes (see fixtures/README.md), and add a parity case for any format or rule change. `core` ports the Visual Studio edition's C# Core file for file, so port a change from there. `Geometry.kt` mirrors `media/editor.js` of the VS Code edition, and only its UML DI region shapes are covered by the fixtures: compare the rest by hand, for example with the screenshots from `:plugin:test`.
 - **Text grammar:** behaviors are argument-less calls separated by `;`; conditions combine calls with `!`, `&&`, `||` and parentheses; `else` only on choice/junction branches; triggers are event names or `after(<number><ms|s|m|h>)`. The editor refuses invalid text, and the validator reports it.
 - **Out of scope:** state machine extension/inheritance and the transition-oriented notation.
 - Don't reimplement code generation: templates and the code model belong to the `fsm` CLI.
