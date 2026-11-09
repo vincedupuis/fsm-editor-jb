@@ -37,6 +37,7 @@ import com.vincegosoftware.fsmeditor.core.Issue
 import com.vincegosoftware.fsmeditor.core.Labels
 import com.vincegosoftware.fsmeditor.core.MachineInfo
 import com.vincegosoftware.fsmeditor.core.MachineKind
+import com.vincegosoftware.fsmeditor.core.PointD
 import com.vincegosoftware.fsmeditor.core.RectD
 import com.vincegosoftware.fsmeditor.core.Severity
 import com.vincegosoftware.fsmeditor.core.SubmachineInfo
@@ -110,6 +111,9 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     private val toolRows = LinkedHashMap<String, ToolRow>()
     private val title = JBLabel()
     private val zoomLabel = JBLabel("100%", SwingConstants.CENTER)
+    /** Problems found by validation. */
+    private var validationIssues: List<Issue> = emptyList()
+    /** Those plus the editor's own layout warnings (overlapping elements). */
     private var issues: List<Issue> = emptyList()
     private var issuesById: Map<String, List<Issue>> = emptyMap()
     private var firstLoad = true
@@ -273,8 +277,8 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
      * or the reason the file can't be read.
      */
     fun update(model: FsmModel?, newIssues: List<Issue>, error: String?, submachines: Map<String, SubmachineInfo>?, machines: List<MachineInfo>?) {
-        issues = newIssues
-        issuesById = newIssues.groupBy { it.id }
+        validationIssues = newIssues
+        refreshLayoutIssues()
         if (error != null) {
             showParseError(error)
             renderStatus()
@@ -293,6 +297,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             }
         }
         val s = session ?: return
+        refreshLayoutIssues()
         if (submachines != null) s.submachines = submachines
         if (machines != null) s.machines = machines
         if (model != null) {
@@ -311,10 +316,17 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
 
     private fun onCommitted() {
         val s = session ?: return
+        refreshLayoutIssues()
         host.write(s.model)
         canvas.repaint()
         updateTitle()
         renderStatus()
+    }
+
+    /** Recomputes the overlap warnings of the current layout, next to the validation results. */
+    fun refreshLayoutIssues() {
+        issues = validationIssues + (session?.overlapIssues() ?: emptyList())
+        issuesById = issues.groupBy { it.id }
     }
 
     fun issuesFor(id: String): List<Issue> = issuesById[id] ?: emptyList()
@@ -444,15 +456,22 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         if (cut) deleteSelection()
     }
 
-    /** Pastes copied elements; returns false when the clipboard holds something else. */
-    fun paste(): Boolean {
+    /**
+     * Pastes copied elements, with their top-left corner at [at] in the region there when given (context menu);
+     * returns false when the clipboard holds something else.
+     */
+    fun paste(at: PointD? = null): Boolean {
         val s = session ?: return false
-        val text = CopyPasteManager.getInstance().getContents<String>(DataFlavor.stringFlavor)
-        val data = ClipboardJson.tryRead(text) ?: return false
-        s.paste(data)
+        val data = ClipboardJson.tryRead(clipboardText()) ?: return false
+        s.paste(data, at)
         renderProps()
         return true
     }
+
+    private fun clipboardText(): String? = CopyPasteManager.getInstance().getContents<String>(DataFlavor.stringFlavor)
+
+    /** Whether the clipboard holds diagram elements, for the context menu's Paste. */
+    val clipboardHoldsElements: Boolean get() = session != null && (ClipboardJson.tryRead(clipboardText())?.vertices?.isNotEmpty() == true)
 
     inner class ClipboardHandler : CopyProvider, CutProvider, PasteProvider, DeleteProvider {
         override fun getActionUpdateThread() = ActionUpdateThread.EDT

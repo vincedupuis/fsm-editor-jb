@@ -569,11 +569,17 @@ object Xmi {
             }
         }
         for (v in model.vertices) {
-            if (v.regions.size < 2) continue
-            val a = regionShapes[v.regions[0].id]
-            val b = regionShapes[v.regions[1].id]
-            if (a != null && b != null) {
-                v.regionLayout = if (abs(b.x - a.x) > abs(b.y - a.y)) RegionLayout.Horizontal else RegionLayout.Vertical
+            if (v.regions.size >= 2) {
+                val a = regionShapes[v.regions[0].id]
+                val b = regionShapes[v.regions[1].id]
+                if (a != null && b != null) {
+                    v.regionLayout = if (abs(b.x - a.x) > abs(b.y - a.y)) RegionLayout.Horizontal else RegionLayout.Vertical
+                }
+            }
+            // Each region's own size, along the layout.
+            for (r in v.regions) {
+                val box = regionShapes[r.id] ?: continue
+                r.size = if (v.regionLayout == RegionLayout.Horizontal) box.w else box.h
             }
         }
 

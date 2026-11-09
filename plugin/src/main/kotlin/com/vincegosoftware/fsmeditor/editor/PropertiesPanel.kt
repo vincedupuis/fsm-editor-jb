@@ -500,7 +500,8 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             "Double-click" to "a transition to add a bend point, a bend point to remove it.",
             "Drag" to "an end of a selected transition onto another element to reconnect it.",
             "Drag" to "a corner of a selected self-transition to reshape its loop; the far corner moves it to another corner of the state.",
-            "Drop" to "an element into a region to nest it.",
+            "Drop" to "an element entirely inside a region to nest it. It then stays in its region, which grows to hold it; right-click › Leave Parent takes it out.",
+            "Drag" to "the line between two regions to resize the region before it.",
             "Drag" to "a composite state by its title bar; dragging inside its regions selects what it encloses.",
             "Right-drag" to "Space+drag, middle-drag or two fingers pan; the wheel or a pinch zooms; F fits.",
             "Shift+click" to "a tool keeps it active.",
@@ -619,8 +620,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                     "Region layout", if (v.regionLayout == RegionLayout.Horizontal) "horizontal" else "vertical",
                     listOf("vertical" to "Stacked (top to bottom)", "horizontal" to "Side by side"),
                 ) {
-                    v.regionLayout = if (it == "horizontal") RegionLayout.Horizontal else RegionLayout.Vertical
-                    commit()
+                    s.setRegionLayout(v, if (it == "horizontal") RegionLayout.Horizontal else RegionLayout.Vertical)
                 })
             }
         }

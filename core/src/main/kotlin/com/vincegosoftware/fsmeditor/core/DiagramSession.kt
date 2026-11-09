@@ -49,6 +49,7 @@ class DiagramSession(model: FsmModel) {
     fun replaceModel(model: FsmModel) {
         this.model = model
         reindex()
+        resetHeaders()
         selection = selection.filterTo(LinkedHashSet()) { index.vertices.containsKey(it) || index.transitions.containsKey(it) }
     }
 
@@ -58,6 +59,7 @@ class DiagramSession(model: FsmModel) {
 
     fun commit() {
         reindex()
+        keepHeaders()
         committedListeners.toList().forEach { it() }
     }
 
@@ -165,6 +167,8 @@ class DiagramSession(model: FsmModel) {
             v.parent = r?.id ?: rootRegion
         }
         model.vertices.add(v)
+        reindex()
+        fitInRegion(v, null, false)
         selection = linkedSetOf(v.id)
         commit()
         return v
@@ -189,21 +193,30 @@ class DiagramSession(model: FsmModel) {
             }
         }
         // Leave room for the captions under the points.
+        val old = boxOf(state)
         state.h = max(state.h, 40.0 + 24 * max(free.count { it.kind == PointKind.Entry }, free.count { it.kind == PointKind.Exit }))
+        fitInRegion(state, old, false)
         commit()
     }
 
     fun addRegion(state: Vertex) {
+        val old = boxOf(state)
         if (state.regions.isEmpty()) {
             // Make room for the region below the name compartment.
             state.w = max(state.w, 220.0)
             state.h = max(state.h, Geometry.headerHeight(model, state) + 120)
-        } else if (state.regionLayout == RegionLayout.Horizontal) {
-            state.w += 160
+            state.regions.add(Region(newId("r")))
+            layoutHeader[state.id] = headerOf(state)
         } else {
-            state.h += 100
+            // The new region comes after the others, which keep their sizes.
+            keepRegionSizes(state)
+            val size = if (state.regionLayout == RegionLayout.Horizontal) 160.0 else 100.0
+            if (state.regionLayout == RegionLayout.Horizontal) state.w += size else state.h += size
+            state.regions.add(Region(newId("r"), "", size))
         }
-        state.regions.add(Region(newId("r")))
+        reindex()
+        followBorder(state, old)
+        fitInRegion(state, old, false)
         selection = linkedSetOf(state.id)
         commit()
     }
@@ -214,6 +227,17 @@ class DiagramSession(model: FsmModel) {
             if (v.parent != regionId) continue
             doomed.add(v.id)
             for (d in index.descendants(v)) doomed.add(d.id)
+        }
+        val i = state.regions.indexOfFirst { it.id == regionId }
+        if (i >= 0 && state.regions.size > 1) {
+            // The state shrinks by the region's size, and the later regions move back with their contents.
+            val old = boxOf(state)
+            keepRegionSizes(state)
+            val size = state.regions[i].size ?: 0.0
+            val horizontal = state.regionLayout == RegionLayout.Horizontal
+            shiftRegions(state, i + 1, state.regions.size - 1, if (horizontal) -size else 0.0, if (horizontal) 0.0 else -size)
+            if (horizontal) state.w -= size else state.h -= size
+            followBorder(state, old)
         }
         state.regions = state.regions.filterTo(mutableListOf()) { it.id != regionId }
         removeVertices(doomed, emptySet())
@@ -424,12 +448,14 @@ class DiagramSession(model: FsmModel) {
     /** Swaps a pseudostate for another kind of its group, keeping its center. */
     fun changeType(v: Vertex, type: VertexType) {
         val c = v.center
+        val old = boxOf(v)
         v.type = type
         val (w, h) = type.defaultSize
         v.w = w
         v.h = h
         v.x = c.x - v.w / 2
         v.y = c.y - v.h / 2
+        fitInRegion(v, old, false)
         commit()
     }
 
@@ -459,21 +485,487 @@ class DiagramSession(model: FsmModel) {
         return true
     }
 
-    /** Moves the selected elements (and everything inside them) by a few pixels. */
-    fun nudge(dx: Double, dy: Double): Boolean {
-        val moved = HashSet<String>()
-        for (id in selection) {
-            val v = index.vertex(id) ?: continue
-            if (index.ancestors(v).any { it.id in selection }) continue
-            for (x in listOf(v) + index.descendants(v)) {
-                if (!moved.add(x.id)) continue
-                x.x += dx
-                x.y += dy
+    // ---------------------------------------------------------------- layout
+    // Elements inside a composite state's region stay inside it: what would leave it grows the region,
+    // its state and the states around it in turn, and moving back during the same drag undoes that.
+
+    companion object {
+        /** Space kept between a region's border and the elements in it. */
+        const val FIT_MARGIN = 10.0
+        /** Smallest extent of a region along its state's region layout. */
+        const val MIN_REGION = 40.0
+
+        private fun boxOf(v: Vertex) = RectD(v.x, v.y, v.w, v.h)
+    }
+
+    /**
+     * Header height each composite state's regions were laid out for (by state id): when its internal
+     * activities change it, the state grows or shrinks by the difference and its regions' contents move
+     * with them. Reset whenever the model comes from the document.
+     */
+    private var layoutHeader = HashMap<String, Double>()
+
+    init {
+        resetHeaders()
+    }
+
+    private fun headerOf(s: Vertex) = Geometry.headerHeight(model, s)
+
+    private fun rectsOf(s: Vertex) = Geometry.regionRects(model, s)
+
+    /** The composite state owning region [id], or null. */
+    private fun regionOwnerOf(id: String?): Vertex? = if (id == null) null else index.regionOwner[id]
+
+    /** Records the current header height of every composite state. */
+    private fun resetHeaders() {
+        layoutHeader = HashMap()
+        for (v in model.vertices) if (v.regions.isNotEmpty()) layoutHeader[v.id] = headerOf(v)
+    }
+
+    /** Geometry of every element (with region sizes and bend points), for [restore]. */
+    class LayoutSnapshot internal constructor(
+        internal val vertices: List<Triple<Vertex, RectD, List<Double?>>>,
+        internal val points: List<Pair<Transition, List<PointD>>>,
+        internal val headers: Map<String, Double>,
+    )
+
+    fun snapshot() = LayoutSnapshot(
+        model.vertices.map { Triple(it, boxOf(it), it.regions.map { r -> r.size }) },
+        model.transitions.map { it to it.points.toList() },
+        HashMap(layoutHeader),
+    )
+
+    fun restore(snap: LayoutSnapshot) {
+        for ((v, box, sizes) in snap.vertices) {
+            v.x = box.x
+            v.y = box.y
+            v.w = box.w
+            v.h = box.h
+            for (i in 0 until minOf(v.regions.size, sizes.size)) v.regions[i].size = sizes[i]
+        }
+        for ((t, points) in snap.points) t.points = points.toMutableList()
+        layoutHeader = HashMap(snap.headers)
+    }
+
+    /** The vertices in region [id], at any depth. */
+    private fun regionContents(id: String): Set<String> {
+        val ids = HashSet<String>()
+        for (v in model.vertices) {
+            if (v.parent != id) continue
+            ids.add(v.id)
+            for (d in index.descendants(v)) ids.add(d.id)
+        }
+        return ids
+    }
+
+    /** Bounding box of the vertices directly in region [id], or null when it is empty. */
+    private fun contentsBox(id: String): RectD? {
+        val kids = model.vertices.filter { it.parent == id }
+        if (kids.isEmpty()) return null
+        val x = kids.minOf { it.x }
+        val y = kids.minOf { it.y }
+        return RectD(x, y, kids.maxOf { it.x + it.w } - x, kids.maxOf { it.y + it.h } - y)
+    }
+
+    /** Moves the vertices [ids] by [dx], [dy], with the bend points of the transitions between them. */
+    private fun shiftVertices(ids: Set<String>, dx: Double, dy: Double) {
+        if ((dx == 0.0 && dy == 0.0) || ids.isEmpty()) return
+        for (v in model.vertices) {
+            if (v.id !in ids) continue
+            v.x += dx
+            v.y += dy
+        }
+        for (t in model.transitions) {
+            if (t.points.isNotEmpty() && t.source in ids && t.target in ids) t.points = t.points.mapTo(mutableListOf()) { PointD(it.x + dx, it.y + dy) }
+        }
+    }
+
+    /** Moves the contents of [s]'s regions [from]..[to] (inclusive) by [dx], [dy]. */
+    private fun shiftRegions(s: Vertex, from: Int, to: Int, dx: Double, dy: Double) {
+        val ids = HashSet<String>()
+        for (i in maxOf(0, from)..minOf(to, s.regions.size - 1)) ids.addAll(regionContents(s.regions[i].id))
+        shiftVertices(ids, dx, dy)
+    }
+
+    /** Keeps the points on the border of [s] on the edge they were on when its box was [old]. */
+    private fun followBorder(s: Vertex, old: RectD) {
+        for (cp in model.vertices) {
+            if (cp.parent != s.id || !index.isBorderVertex(cp)) continue
+            val c = cp.center
+            val d = listOf(kotlin.math.abs(c.x - old.x), kotlin.math.abs(old.right - c.x), kotlin.math.abs(c.y - old.y), kotlin.math.abs(old.bottom - c.y))
+            val m = d.min()
+            val p = when (m) {
+                d[0] -> PointD(s.x, c.y)
+                d[1] -> PointD(s.x + s.w, c.y)
+                d[2] -> PointD(c.x, s.y)
+                else -> PointD(c.x, s.y + s.h)
+            }
+            Geometry.snapToBorder(cp, s, p)
+        }
+    }
+
+    /** Stores the drawn size of each of [s]'s regions, so that they can change one by one. */
+    fun keepRegionSizes(s: Vertex) {
+        val horizontal = s.regionLayout == RegionLayout.Horizontal
+        rectsOf(s).forEachIndexed { i, r -> s.regions[i].size = if (horizontal) r.rect.w else r.rect.h }
+    }
+
+    /**
+     * Changes the size of region [i] of [s] by [d] at its far end (bottom, or right side by side): the
+     * state changes with it and the later regions move with their contents.
+     */
+    private fun resizeRegionEnd(s: Vertex, i: Int, d: Double) {
+        if (d == 0.0) return
+        keepRegionSizes(s)
+        s.regions[i].size = (s.regions[i].size ?: 0.0) + d
+        if (s.regionLayout == RegionLayout.Horizontal) {
+            s.w += d
+            shiftRegions(s, i + 1, s.regions.size - 1, d, 0.0)
+        } else {
+            s.h += d
+            shiftRegions(s, i + 1, s.regions.size - 1, 0.0, d)
+        }
+    }
+
+    /**
+     * Grows region [i] of [s] on its sides (each amount >= 0): the state grows on the same sides, and what
+     * lies beyond the region in its state moves with that side.
+     */
+    private fun growRegion(s: Vertex, i: Int, left: Double, right: Double, top: Double, bottom: Double) {
+        val old = boxOf(s)
+        keepRegionSizes(s)
+        if (s.regionLayout == RegionLayout.Horizontal) {
+            s.y -= top
+            s.h += top + bottom
+            if (left > 0) {
+                s.x -= left
+                s.w += left
+                s.regions[i].size = (s.regions[i].size ?: 0.0) + left
+                shiftRegions(s, 0, i - 1, -left, 0.0)
+            }
+            resizeRegionEnd(s, i, right)
+        } else {
+            s.x -= left
+            s.w += left + right
+            if (top > 0) {
+                s.y -= top
+                s.h += top
+                s.regions[i].size = (s.regions[i].size ?: 0.0) + top
+                shiftRegions(s, 0, i - 1, 0.0, -top)
+            }
+            resizeRegionEnd(s, i, bottom)
+        }
+        followBorder(s, old)
+        keepHeader(s)
+    }
+
+    /**
+     * After a change of [s]'s header height (its internal activities, or its width rewrapping them), moves
+     * its bottom edge by the difference: its regions keep their sizes and their contents move with them.
+     * Returns whether it changed.
+     */
+    private fun keepHeader(s: Vertex): Boolean {
+        if (s.regions.isEmpty()) return false
+        val h = headerOf(s)
+        val before = layoutHeader[s.id]
+        layoutHeader[s.id] = h
+        if (before == null || before == h) return false
+        val old = boxOf(s)
+        s.h += h - before
+        shiftRegions(s, 0, s.regions.size - 1, 0.0, h - before)
+        followBorder(s, old)
+        return true
+    }
+
+    /** [keepHeader] for every composite state, growing the states around those that grew. */
+    private fun keepHeaders() {
+        for (s in model.vertices.filter { it.regions.isNotEmpty() }.sortedByDescending { index.depth(it) }) {
+            val old = boxOf(s)
+            if (keepHeader(s)) fitInRegion(s, old, false)
+        }
+    }
+
+    /**
+     * Grows the region holding [v] (with its state, and the states around it in turn) so that [v] lies inside
+     * it with the margin. [old] is its box before the change, or null for a new element: where it already
+     * came closer to the region's border, that smaller gap is kept. The growth is a multiple of the grid
+     * unless [exact].
+     */
+    fun fitInRegion(v: Vertex, old: RectD?, exact: Boolean) {
+        if (index.isBorderVertex(v)) return
+        val s = regionOwnerOf(v.parent) ?: return
+        val i = s.regions.indexOfFirst { it.id == v.parent }
+        val r = rectsOf(s)[i].rect
+        fun gap(g: Double) = if (old != null) minOf(FIT_MARGIN, g) else FIT_MARGIN
+        val gl = gap(if (old != null) old.x - r.x else 0.0)
+        val gr = gap(if (old != null) r.right - old.right else 0.0)
+        val gt = gap(if (old != null) old.y - r.y else 0.0)
+        val gb = gap(if (old != null) r.bottom - old.bottom else 0.0)
+        fun up(n: Double) = if (n <= 1e-6) 0.0 else if (exact) n else kotlin.math.ceil(n / Geometry.GRID - 1e-6) * Geometry.GRID
+        val left = up(r.x + gl - v.x)
+        val right = up(v.x + v.w + gr - r.right)
+        val top = up(r.y + gt - v.y)
+        val bottom = up(v.y + v.h + gb - r.bottom)
+        if (left == 0.0 && right == 0.0 && top == 0.0 && bottom == 0.0) return
+        val before = boxOf(s)
+        growRegion(s, i, left, right, top, bottom)
+        fitInRegion(s, before, exact)
+    }
+
+    /** How far each edge of a composite state can move inward: the largest left and top, the smallest right and bottom. */
+    private class Limits(val left: Double, val right: Double, val top: Double, val bottom: Double)
+
+    /**
+     * How far each edge of composite state [s] can move inward without leaving any of its contents outside
+     * their region. A gap already smaller than the margin is kept, and each region keeps at least [MIN_REGION].
+     */
+    private fun resizeLimits(s: Vertex): Limits {
+        val rects = rectsOf(s).map { it.rect }
+        val n = rects.size
+        val boxes = s.regions.map { contentsBox(it.id) }
+        val all = boxes.filterNotNull()
+        val union = if (all.isEmpty()) null else {
+            val ux = all.minOf { it.x }
+            val uy = all.minOf { it.y }
+            RectD(ux, uy, all.maxOf { it.right } - ux, all.maxOf { it.bottom } - uy)
+        }
+        // The edge at `edge` may come up to `content` minus the margin, or stay where it is when already closer.
+        fun lo(content: Double, edge: Double) = maxOf(content - FIT_MARGIN, minOf(edge, content))
+        fun hi(content: Double, edge: Double) = minOf(content + FIT_MARGIN, maxOf(edge, content))
+        val first = rects[0]
+        val last = rects[n - 1]
+        val header = first.y - s.y
+        var left = Double.POSITIVE_INFINITY
+        var right = Double.NEGATIVE_INFINITY
+        var top: Double
+        var bottom: Double
+        if (s.regionLayout == RegionLayout.Horizontal) {
+            left = first.right - MIN_REGION
+            boxes[0]?.let { left = minOf(left, lo(it.x, first.x)) }
+            right = last.x + MIN_REGION
+            boxes[n - 1]?.let { right = maxOf(right, hi(it.right, last.right)) }
+            top = s.y + s.h - MIN_REGION - header
+            bottom = first.y + MIN_REGION
+            if (union != null) {
+                top = minOf(top, lo(union.y, first.y) - header)
+                bottom = maxOf(bottom, hi(union.bottom, s.y + s.h))
+            }
+        } else {
+            if (union != null) {
+                left = lo(union.x, s.x)
+                right = hi(union.right, s.x + s.w)
+            }
+            top = first.bottom - MIN_REGION - header
+            boxes[0]?.let { top = minOf(top, lo(it.y, first.y) - header) }
+            bottom = last.y + MIN_REGION
+            boxes[n - 1]?.let { bottom = maxOf(bottom, hi(it.bottom, last.bottom)) }
+        }
+        return Limits(left, right, top, bottom)
+    }
+
+    /** Smallest size (width, height) a vertex can be resized to (a composite state's regions add their own limits). */
+    fun minimumSize(v: Vertex): Pair<Double, Double> {
+        val bar = v.type == VertexType.Fork || v.type == VertexType.Join
+        val minW = if (bar) 6.0 else 40.0
+        val minH = when {
+            bar -> 6.0
+            v.type == VertexType.State -> Geometry.headerHeight(model, v) + if (v.regions.isNotEmpty()) 20 else 6
+            else -> 30.0
+        }
+        return minW to minH
+    }
+
+    /** Keeps the connection points of [state] on its border after a resize. */
+    fun keepPointsOnBorder(state: Vertex) {
+        for (cp in model.vertices) {
+            if (cp.parent == state.id && index.isBorderVertex(cp)) Geometry.snapToBorder(cp, state, cp.center)
+        }
+    }
+
+    /** Starts dragging a resize handle of [v] or the line after one of its regions: the layout to restart from. */
+    fun beginLayoutDrag(v: Vertex): LayoutSnapshot {
+        if (v.regions.isNotEmpty()) keepRegionSizes(v)
+        return snapshot()
+    }
+
+    /**
+     * Resizes [v] from the layout [snap] (taken with its box [x0], [y0], [w0], [h0]) by dragging [corner] by
+     * [dx], [dy]; snapped to the grid unless [exact]. A composite state keeps its contents in their regions;
+     * side by side the left edge resizes the first region and stacked the top edge does; the region holding
+     * [v] grows when it no longer holds it.
+     */
+    fun resizeFrom(snap: LayoutSnapshot, v: Vertex, corner: String, x0: Double, y0: Double, w0: Double, h0: Double, dx: Double, dy: Double, exact: Boolean) {
+        restore(snap)
+        val start = boxOf(v)
+        val west = 'w' in corner
+        val north = 'n' in corner
+        val n = v.regions.size
+        val horizontal = v.regionLayout == RegionLayout.Horizontal
+        val minW = minimumSize(v).first
+        var lim = if (n > 0) resizeLimits(v) else null
+        if (west) {
+            // The right edge stays put.
+            val right = x0 + w0
+            v.x = minOf(right - minW, if (exact) x0 + dx else Geometry.snap(x0 + dx))
+            if (lim != null) v.x = minOf(v.x, lim.left)
+            v.w = right - v.x
+            if (n > 1 && horizontal) v.regions[0].size = (v.regions[0].size ?: 0.0) - (v.x - x0)
+        } else {
+            v.w = maxOf(minW, if (exact) w0 + dx else Geometry.snap(v.x + w0 + dx) - v.x)
+            if (lim != null) v.w = maxOf(v.w, lim.right - v.x)
+        }
+        // After the width: the wrapped text depends on it.
+        if (n > 0) {
+            keepHeader(v)
+            lim = resizeLimits(v)
+        }
+        val y1 = v.y
+        val h1 = v.h
+        val minH = minimumSize(v).second
+        if (north) {
+            // The bottom edge stays put.
+            val bottom = y1 + h1
+            v.y = minOf(bottom - minH, if (exact) y0 + dy else Geometry.snap(y0 + dy))
+            if (lim != null) v.y = minOf(v.y, lim.top)
+            v.h = bottom - v.y
+            if (n > 1 && !horizontal) v.regions[0].size = (v.regions[0].size ?: 0.0) - (v.y - y1)
+        } else {
+            v.h = maxOf(minH, if (exact) h1 + dy else Geometry.snap(v.y + h1 + dy) - v.y)
+            if (lim != null) v.h = maxOf(v.h, lim.bottom - v.y)
+        }
+        followBorder(v, start)
+        fitInRegion(v, start, exact)
+    }
+
+    /**
+     * Drags the line after region [i] of [s] by [delta] from the layout [snap]: the region resizes (not below
+     * its contents or [MIN_REGION]), its state with it, and the later regions move with their contents.
+     */
+    fun resizeRegionFrom(snap: LayoutSnapshot, s: Vertex, i: Int, delta: Double, exact: Boolean) {
+        restore(snap)
+        val start = boxOf(s)
+        val horizontal = s.regionLayout == RegionLayout.Horizontal
+        val r = rectsOf(s)[i].rect
+        val from = if (horizontal) r.x else r.y
+        val end0 = if (horizontal) r.right else r.bottom
+        var end = end0 + if (exact) delta else Geometry.snap(delta)
+        var min = from + MIN_REGION
+        contentsBox(s.regions[i].id)?.let { c ->
+            val far = if (horizontal) c.right else c.bottom
+            min = maxOf(min, minOf(far + FIT_MARGIN, maxOf(end0, far)))
+        }
+        end = maxOf(end, min)
+        resizeRegionEnd(s, i, end - end0)
+        followBorder(s, start)
+        keepHeader(s)
+        fitInRegion(s, start, exact)
+    }
+
+    /** A dragged element and its position at the start of the drag. */
+    class MovedItem(val v: Vertex, val x0: Double, val y0: Double)
+
+    /** A transition whose bend points move with a drag, and its bend points at the start. */
+    class MovedPoints(val t: Transition, val points0: List<PointD>)
+
+    /**
+     * Moves the dragged elements from the layout [snap]: [items] (the roots and their contents) by [dx], [dy]
+     * with the bend points of [transitions]. A connection point dragged alone stays on its state's border,
+     * under [p]; other roots keep inside their region, which grows ([boxes] are their boxes at the start).
+     */
+    fun moveFrom(snap: LayoutSnapshot, items: List<MovedItem>, transitions: List<MovedPoints>, roots: List<Vertex>,
+        boxes: Map<String, RectD>, dx: Double, dy: Double, p: PointD, exact: Boolean) {
+        restore(snap)
+        for (it in items) {
+            it.v.x = it.x0 + dx
+            it.v.y = it.y0 + dy
+        }
+        for (it in transitions) it.t.points = it.points0.mapTo(mutableListOf()) { q -> PointD(q.x + dx, q.y + dy) }
+        val lead = roots.firstOrNull() ?: return
+        if (roots.size == 1 && index.isBorderVertex(lead)) {
+            index.vertex(lead.parent)?.let { Geometry.snapToBorder(lead, it, p) }
+            return
+        }
+        for (r in roots) fitInRegion(r, boxes[r.id], exact)
+    }
+
+    /**
+     * Region a moved element is dropped into: the deepest one holding its whole box, when that is its own
+     * region or lies inside it (an element never leaves its region by a drag); null to keep its region.
+     */
+    fun dropRegionOf(v: Vertex, moving: Set<String>): RegionRect? {
+        val r = Geometry.regionHolding(index, boxOf(v), moving) ?: return null
+        return if (r.id != v.parent && Geometry.regionWithin(index, r.id, v.parent)) r else null
+    }
+
+    /** Region to highlight while [lead] is dragged: where it would be dropped, else its own region. */
+    fun dropHighlight(lead: Vertex, moving: Set<String>): RegionRect? =
+        dropRegionOf(lead, moving) ?: regionOwnerOf(lead.parent)?.let { s -> rectsOf(s).firstOrNull { it.id == lead.parent } }
+
+    /**
+     * Switches [s] between stacked and side-by-side regions: they share it equally again, any region too small
+     * for its contents grows (with the state), and each region's contents move with it.
+     */
+    fun setRegionLayout(s: Vertex, layout: RegionLayout) {
+        if (s.regionLayout == layout) return
+        val old = boxOf(s)
+        val before = rectsOf(s).map { it.rect }
+        // Each region's contents, relative to the region's top-left corner.
+        val rel = s.regions.mapIndexed { i, r -> contentsBox(r.id)?.let { b -> (b.right - before[i].x) to (b.bottom - before[i].y) } ?: (0.0 to 0.0) }
+        val n = before.size
+        val body = s.h - (before[0].y - s.y)
+        s.regionLayout = layout
+        for (r in s.regions) r.size = null
+        if (layout == RegionLayout.Horizontal) {
+            val sizes = rel.map { maxOf(s.w / n, it.first + FIT_MARGIN, MIN_REGION) }
+            s.w = sizes.sum()
+            sizes.forEachIndexed { i, size -> s.regions[i].size = size }
+            s.h = headerOf(s) + maxOf(body, rel.maxOf { it.second + FIT_MARGIN })
+        } else {
+            s.w = maxOf(s.w, rel.maxOf { it.first + FIT_MARGIN })
+            val sizes = rel.map { maxOf(body / n, it.second + FIT_MARGIN, MIN_REGION) }
+            sizes.forEachIndexed { i, size -> s.regions[i].size = size }
+            s.h = headerOf(s) + sizes.sum()
+        }
+        layoutHeader[s.id] = headerOf(s)
+        val after = rectsOf(s).map { it.rect }
+        for (i in 0 until n) shiftVertices(regionContents(s.regions[i].id), after[i].x - before[i].x, after[i].y - before[i].y)
+        followBorder(s, old)
+        fitInRegion(s, old, false)
+        commit()
+    }
+
+    /** Warnings for elements whose boxes overlap, other than a state and what it contains; comments don't count. */
+    fun overlapIssues(): List<Issue> {
+        val output = ArrayList<Issue>()
+        val vs = model.vertices.filter { it.type != VertexType.Comment }
+        fun describe(v: Vertex) = if (v.name.isNotEmpty()) "'${v.name}'" else "an unnamed ${v.type.title}"
+        for (i in vs.indices) {
+            val a = vs[i]
+            for (j in i + 1 until vs.size) {
+                val b = vs[j]
+                if (!(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h)) continue
+                if (index.isInside(a, b.id) || index.isInside(b, a.id)) continue
+                output.add(Issue(a.id, Severity.Warning, "Overlaps ${describe(b)}."))
+                output.add(Issue(b.id, Severity.Warning, "Overlaps ${describe(a)}."))
             }
         }
-        if (moved.isEmpty()) return false
+        return output
+    }
+
+    /** The selected elements (without a selected ancestor) when they all lie in a composite state's region. */
+    private fun leavingElements(): List<Vertex> {
+        val roots = selectionRoots()
+        return if (roots.isNotEmpty() && roots.all { !index.isBorderVertex(it) && regionOwnerOf(it.parent) != null }) roots else emptyList()
+    }
+
+    val canLeaveParent: Boolean get() = leavingElements().isNotEmpty()
+
+    /** Moves the selected elements up one level, out of their composite state, without moving them on the diagram. */
+    fun leaveParent() {
+        val roots = leavingElements()
+        if (roots.isEmpty()) return
+        for (v in roots) v.parent = regionOwnerOf(v.parent)!!.parent
         commit()
-        return true
     }
 
     /**
@@ -489,114 +981,30 @@ class DiagramSession(model: FsmModel) {
         val anchor = index.ancestors(clicked).lastOrNull { it.id in selection } ?: clicked
         if (states.size < 2 || states.none { it === anchor }) return false
 
-        val saved = model.vertices.map { Saved(it, it.x, it.y, it.w, it.h) }
-        val savedPoints = model.transitions.map { it to it.points }
-        val moved = ArrayList<Vertex>()
+        val snap = snapshot()
+        val moved = ArrayList<Pair<Vertex, RectD>>()
         for (v in states) {
             val dx = if (horizontally) 0.0 else anchor.centerX - v.centerX
             val dy = if (horizontally) anchor.centerY - v.centerY else 0.0
             if (dx == 0.0 && dy == 0.0) continue
-            moved.add(v)
-            val group = listOf(v) + index.descendants(v)
-            for (x in group) {
-                x.x += dx
-                x.y += dy
-            }
-            val ids = group.mapTo(HashSet()) { it.id }
-            for (t in model.transitions) {
-                if (t.points.isNotEmpty() && t.source in ids && t.target in ids) {
-                    t.points = t.points.mapTo(mutableListOf()) { PointD(it.x + dx, it.y + dy) }
-                }
-            }
+            moved.add(v to boxOf(v))
+            shiftVertices((listOf(v) + index.descendants(v)).mapTo(HashSet()) { it.id }, dx, dy)
         }
         if (moved.isEmpty()) return false
 
         // Innermost first: a state that grows may no longer fit in its own region.
-        for (s in moved.flatMap { index.ancestors(it) }.distinct().sortedByDescending { index.depth(it) }) {
-            if (fitRegions(s)) continue
-            for (r in saved) {
-                r.v.x = r.x
-                r.v.y = r.y
-                r.v.w = r.w
-                r.v.h = r.h
-            }
-            for ((t, points) in savedPoints) t.points = points
-            say("The states cannot be aligned: they would leave their regions of '${s.name}'.")
+        for ((v, old) in moved.sortedByDescending { index.depth(it.first) }) fitInRegion(v, old, true)
+        fun along(v: Vertex) = if (horizontally) v.centerY else v.centerX
+        val off = states.firstOrNull { kotlin.math.abs(along(it) - along(anchor)) > 0.5 }
+        if (off != null) {
+            // Growing one region moved the others: states in different regions of one state can't line up.
+            restore(snap)
+            val shared = index.ancestors(off).firstOrNull { index.isInside(anchor, it.id) }
+            say("The states cannot be aligned: they would leave their regions of '${shared?.name ?: ""}'.")
             return false
         }
         commit()
         return true
-    }
-
-    companion object {
-        /** Space kept between a region's border and its contents when [align] grows a state. */
-        const val FIT_MARGIN = 10.0
-    }
-
-    private class Saved(val v: Vertex, val x: Double, val y: Double, val w: Double, val h: Double)
-
-    /** Extent of the vertices of region [i] along one axis. */
-    private class Extent(val i: Int, val lo: Double, val hi: Double)
-
-    /** Grows [s] so that each of its regions holds its vertices; false when no size can. */
-    private fun fitRegions(s: Vertex): Boolean {
-        val n = s.regions.size
-        val boxes = ArrayList<Pair<Int, RectD>>()
-        for (i in 0 until n) {
-            val id = s.regions[i].id
-            val kids = model.vertices.filter { it.parent == id }
-            if (kids.isEmpty()) continue
-            val x0 = kids.minOf { it.x }
-            val y0 = kids.minOf { it.y }
-            boxes.add(i to RectD(x0, y0, kids.maxOf { it.x + it.w } - x0, kids.maxOf { it.y + it.h } - y0))
-        }
-        if (boxes.isEmpty()) return true
-        if (s.regionLayout == RegionLayout.Horizontal) {
-            val along = fitAlong(s.x, s.x + s.w, n, boxes.map { (i, r) -> Extent(i, r.x, r.right) }) ?: return false
-            val (x, right) = stretch(s.x, s.x + s.w, along.first, along.first + n * along.second)
-            s.x = x
-            s.w = right - x
-            val header = Geometry.headerHeight(model, s)
-            val (top, bottom) = stretch(s.y + header, s.y + s.h, boxes.minOf { it.second.y } - FIT_MARGIN, boxes.maxOf { it.second.bottom } + FIT_MARGIN)
-            s.y = top - header
-            s.h = bottom - s.y
-        } else {
-            val (left, right) = stretch(s.x, s.x + s.w, boxes.minOf { it.second.x } - FIT_MARGIN, boxes.maxOf { it.second.right } + FIT_MARGIN)
-            s.x = left
-            s.w = right - left
-            // After the width: the wrapped activities depend on it.
-            val header = Geometry.headerHeight(model, s)
-            val along = fitAlong(s.y + header, s.y + s.h, n, boxes.map { (i, r) -> Extent(i, r.y, r.bottom) }) ?: return false
-            val (top, bottom) = stretch(s.y + header, s.y + s.h, along.first, along.first + n * along.second)
-            s.y = top - header
-            s.h = bottom - s.y
-        }
-        keepPointsOnBorder(s)
-        return true
-    }
-
-    /** The extent [start0]..[end0] grown to cover [lo]..[hi], unchanged where it already does. */
-    private fun stretch(start0: Double, end0: Double, lo: Double, hi: Double): Pair<Double, Double> =
-        (if (lo < start0 - 1e-6) lo else start0) to (if (hi > end0 + 1e-6) hi else end0)
-
-    /**
-     * Start and size of [n] equal regions laid out from [start0] to [end0], grown as little as possible so
-     * that region `i` spans `[lo, hi]` with the margin; null when the extents overlap so that no size fits them.
-     */
-    private fun fitAlong(start0: Double, end0: Double, n: Int, items: List<Extent>): Pair<Double, Double>? {
-        // Region i spans [start + i * size, start + (i + 1) * size]. Upper bounds: start + j * size <= a;
-        // lower bounds: start + (k + 1) * size >= b. The first and last ones keep the old extent.
-        val uppers = listOf(0 to start0) + items.map { it.i to it.lo - FIT_MARGIN }
-        val lowers = listOf(n - 1 to end0) + items.map { it.i to it.hi + FIT_MARGIN }
-        // Each pair bounds the size from below when the lower bound's region doesn't come before the upper one's.
-        var size = max(0.0, (end0 - start0) / n)
-        for ((j, a) in uppers) {
-            for ((k, b) in lowers) {
-                if (k + 1 > j) size = max(size, (b - a) / (k + 1 - j))
-            }
-        }
-        val start = uppers.minOf { (j, a) -> a - j * size }
-        return if (lowers.all { (k, b) -> start + (k + 1) * size >= b - 1e-6 }) start to size else null
     }
 
     /** Selected elements without a selected ancestor, which lead a move. */
@@ -619,29 +1027,9 @@ class DiagramSession(model: FsmModel) {
                 }
                 continue
             }
-            val r = Geometry.regionAt(index, v.center, moving)
-            v.parent = r?.id ?: rootRegion
+            dropRegionOf(v, moving)?.let { v.parent = it.id }
         }
         commit()
-    }
-
-    /** Smallest size (width, height) a vertex can be resized to. */
-    fun minimumSize(v: Vertex): Pair<Double, Double> {
-        val bar = v.type == VertexType.Fork || v.type == VertexType.Join
-        val minW = if (bar) 6.0 else 40.0
-        val minH = when {
-            bar -> 6.0
-            v.type == VertexType.State -> Geometry.headerHeight(model, v) + if (v.regions.isNotEmpty()) 30 else 6
-            else -> 30.0
-        }
-        return minW to minH
-    }
-
-    /** Keeps the connection points of [state] on its border after a resize. */
-    fun keepPointsOnBorder(state: Vertex) {
-        for (cp in model.vertices) {
-            if (cp.parent == state.id && index.isBorderVertex(cp)) Geometry.snapToBorder(cp, state, cp.center)
-        }
     }
 
     // ---------------------------------------------------------------- clipboard
@@ -666,33 +1054,50 @@ class DiagramSession(model: FsmModel) {
         pasteCount = 0
     }
 
-    fun paste(data: ClipboardFragment?) {
+    /**
+     * Adds a copy of [data]. Without [at] (keyboard paste, duplicate), each element goes into its original's
+     * region when there is one, offset further at each repeat; with [at] (context menu), the copy's top-left
+     * corner goes there, into the region under it. Regions grow to hold the copy.
+     */
+    fun paste(data: ClipboardFragment?, at: PointD? = null) {
         if (data == null || data.vertices.isEmpty()) return
         reindex()
-        pasteCount++
-        val off = 20.0 * pasteCount
         val map = HashMap<String, String>()
         for (v in data.vertices) {
             map[v.id] = newId("v")
             for (r in v.regions) map[r.id] = newId("r")
         }
+        val offX: Double
+        val offY: Double
+        var target: RegionRect? = null
+        if (at != null) {
+            val roots = data.vertices.filter { it.parent !in map }
+            offX = Geometry.snap(at.x) - roots.minOf { it.x }
+            offY = Geometry.snap(at.y) - roots.minOf { it.y }
+            target = Geometry.regionAt(index, at, emptySet())
+        } else {
+            pasteCount++
+            offX = 20.0 * pasteCount
+            offY = offX
+        }
         val added = ArrayList<Vertex>()
         for (src in data.vertices) {
             val v = src.copy()
             v.id = map[src.id]!!
-            v.x += off
-            v.y += off
-            v.regions = v.regions.mapTo(mutableListOf()) { Region(map[it.id]!!, it.name) }
+            v.x += offX
+            v.y += offY
+            v.regions = v.regions.mapTo(mutableListOf()) { Region(map[it.id]!!, it.name, it.size) }
             val parent = map[v.parent]
             if (parent != null) {
                 v.parent = parent
-            } else {
-                // Pasted without its owner: keep it where it was when that still exists.
-                val border = index.isBorderVertex(v)
-                if (if (border) index.vertex(v.parent) == null else !index.isRegion(v.parent)) {
-                    if (border) continue
-                    v.parent = rootRegion
-                }
+            } else if (index.isBorderVertex(v)) {
+                // Pasted without its state: on that state's border when it still exists.
+                val state = index.vertex(v.parent) ?: continue
+                if (at != null) Geometry.snapToBorder(v, state, v.center)
+            } else if (at != null && v.type != VertexType.EntryPoint && v.type != VertexType.ExitPoint) {
+                v.parent = target?.id ?: rootRegion
+            } else if (at != null || !index.isRegion(v.parent)) {
+                v.parent = rootRegion
             }
             v.anchors = v.anchors.filter { it in map }.mapTo(mutableListOf()) { map[it]!! }
             model.vertices.add(v)
@@ -704,12 +1109,14 @@ class DiagramSession(model: FsmModel) {
             t.id = newId("t")
             t.source = map[src.source]!!
             t.target = map[src.target]!!
-            t.points = t.points.mapTo(mutableListOf()) { PointD(it.x + off, it.y + off) }
+            t.points = t.points.mapTo(mutableListOf()) { PointD(it.x + offX, it.y + offY) }
             model.transitions.add(t)
         }
         reindex()
         val addedIds = added.map { it.id }.toSet()
-        selection = added.filter { v -> index.ancestors(v).none { it.id in addedIds } }.mapTo(LinkedHashSet()) { it.id }
+        val pastedRoots = added.filter { v -> index.ancestors(v).none { it.id in addedIds } }
+        for (v in pastedRoots) fitInRegion(v, null, false)
+        selection = pastedRoots.mapTo(LinkedHashSet()) { it.id }
         commit()
     }
 }

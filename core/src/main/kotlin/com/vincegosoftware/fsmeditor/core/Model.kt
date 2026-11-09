@@ -163,8 +163,13 @@ object ElementColors {
     }
 }
 
-class Region(var id: String = "", var name: String = "") {
-    fun copy() = Region(id, name)
+/**
+ * A region. [size] is, for regions of a state, its extent along the state's region layout (height when
+ * stacked, width side by side). The last region takes whatever the others leave; without sizes, the
+ * regions share the state equally.
+ */
+class Region(var id: String = "", var name: String = "", var size: Double? = null) {
+    fun copy() = Region(id, name, size)
 }
 
 class Vertex(

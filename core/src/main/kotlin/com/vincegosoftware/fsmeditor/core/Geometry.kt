@@ -63,17 +63,55 @@ object Geometry {
         return h
     }
 
+    /**
+     * Extents of a state's regions along its region layout, out of [total]: their own sizes, the last one
+     * taking the rest, or equal parts when some size is missing or they leave nothing for the last one.
+     */
+    fun regionSizes(regs: List<Region>, total: Double): List<Double> {
+        val own = regs.dropLast(1).map { it.size }
+        val sum = own.sumOf { it ?: 0.0 }
+        if (own.all { it != null && it > 0 } && sum < total) return own.map { it!! } + (total - sum)
+        return regs.map { total / regs.size }
+    }
+
     fun regionRects(model: FsmModel, v: Vertex, measure: (String) -> Double = textMeasure): List<RegionRect> {
         val regs = v.regions
         if (regs.isEmpty()) return emptyList()
         val top = v.y + min(headerHeight(model, v, measure), v.h - 20)
         val bh = v.y + v.h - top
-        val n = regs.size
         val horizontal = v.regionLayout == RegionLayout.Horizontal
+        val sizes = regionSizes(regs, if (horizontal) v.w else bh)
+        var at = if (horizontal) v.x else top
         return regs.mapIndexed { i, r ->
-            val rect = if (horizontal) RectD(v.x + i * v.w / n, top, v.w / n, bh) else RectD(v.x, top + i * bh / n, v.w, bh / n)
+            val rect = if (horizontal) RectD(at, top, sizes[i], bh) else RectD(v.x, at, v.w, sizes[i])
+            at += sizes[i]
             RegionRect(r.id, r.name, rect)
         }
+    }
+
+    /** Deepest region that holds the whole box [b], ignoring the states in [exclude]. */
+    fun regionHolding(ix: ModelIndex, b: RectD, exclude: Set<String>): RegionRect? {
+        val states = ix.model.vertices
+            .filter { it.type == VertexType.State && it.regions.isNotEmpty() && it.id !in exclude }
+            .sortedByDescending { ix.depth(it) }
+        for (s in states) {
+            for (r in regionRects(ix.model, s)) {
+                val q = r.rect
+                if (b.x >= q.x - 1e-6 && b.y >= q.y - 1e-6 && b.right <= q.right + 1e-6 && b.bottom <= q.bottom + 1e-6) return r
+            }
+        }
+        return null
+    }
+
+    /** Whether region [id] is region [outer] or lies inside it, at any depth. */
+    fun regionWithin(ix: ModelIndex, id: String, outer: String): Boolean {
+        if (id == outer) return true
+        var o = ix.regionOwner[id]
+        while (o != null) {
+            if (o.parent == outer) return true
+            o = ix.regionOwner[o.parent]
+        }
+        return false
     }
 
     /** Deepest region under [p], ignoring the states in [exclude]. */

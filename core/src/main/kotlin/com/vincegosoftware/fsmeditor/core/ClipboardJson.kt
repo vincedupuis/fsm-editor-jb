@@ -13,7 +13,9 @@ object ClipboardJson {
         val o = JsonObjectWriter()
         o.str("id", v.id).str("type", v.type.key).str("name", v.name).str("parent", v.parent)
             .num("x", v.x).num("y", v.y).num("w", v.w).num("h", v.h)
-        o.raw("regions", "[" + v.regions.joinToString(",") { JsonObjectWriter().str("id", it.id).str("name", it.name).toString() } + "]")
+        o.raw("regions", "[" + v.regions.joinToString(",") { r ->
+            JsonObjectWriter().str("id", r.id).str("name", r.name).also { w -> r.size?.let { w.num("size", it) } }.toString()
+        } + "]")
         if (v.regions.size > 1) o.str("regionLayout", if (v.regionLayout == RegionLayout.Horizontal) "horizontal" else "vertical")
         o.opt("entry", v.entry).opt("exit", v.exit).opt("doActivity", v.doActivity).opt("invariant", v.invariant)
             .opt("submachine", v.submachine).opt("stereotype", v.stereotype)
@@ -86,7 +88,7 @@ object ClipboardJson {
         for (item in list(root, "vertices").filterIsInstance<Map<*, *>>()) {
             val type = VertexType.parseKey(str(item, "type")) ?: continue
             val v = Vertex(str(item, "id"), type, str(item, "name"), str(item, "parent"), dbl(item, "x"), dbl(item, "y"), dbl(item, "w", 40.0), dbl(item, "h", 40.0))
-            v.regions = list(item, "regions").filterIsInstance<Map<*, *>>().mapTo(mutableListOf()) { Region(str(it, "id"), str(it, "name")) }
+            v.regions = list(item, "regions").filterIsInstance<Map<*, *>>().mapTo(mutableListOf()) { Region(str(it, "id"), str(it, "name"), it["size"] as? Double) }
             v.regionLayout = if (str(item, "regionLayout") == "horizontal") RegionLayout.Horizontal else RegionLayout.Vertical
             v.entry = str(item, "entry")
             v.exit = str(item, "exit")

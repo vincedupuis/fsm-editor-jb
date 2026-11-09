@@ -262,6 +262,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             drawGrid(g)
             val s = s ?: return
             s.reindex()
+            editor.refreshLayoutIssues()
             labels.clear()
             g.translate(viewX, viewY)
             g.scale(zoom, zoom)
@@ -706,6 +707,19 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
             }
         }
+        // The lines between regions: dragged, they resize the region before them.
+        for (st in s.model.vertices.asReversed()) {
+            val rects = Geo.regionRects(s.model, st)
+            for (i in 0 until rects.size - 1) {
+                val r = rects[i].rect
+                val near = if (st.regionLayout == RegionLayout.Horizontal) {
+                    abs(p.x - r.right) <= 3 + tolerance && p.y >= r.y && p.y <= r.bottom
+                } else {
+                    abs(p.y - r.bottom) <= 3 + tolerance && p.x >= r.x && p.x <= r.right
+                }
+                if (near) return Hit(HitKind.Handle, st.id, handle = "sep", index = i)
+            }
+        }
         return itemAt(s, p, true)
     }
 
@@ -799,6 +813,22 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             }
             group.addSeparator()
         }
+        if (s.canLeaveParent) {
+            group.add(item("Leave Parent") {
+                s.leaveParent()
+                editor.renderProps()
+                repaint()
+            })
+            group.addSeparator()
+        }
+        val copyable = s.collectSelection() != null
+        group.add(item("Cut", copyable) { editor.copy(true) })
+        group.add(item("Copy", copyable) { editor.copy(false) })
+        group.add(item("Paste", editor.clipboardHoldsElements) {
+            editor.paste(p)
+            repaint()
+        })
+        group.addSeparator()
         if (id != null) {
             group.add(item("Delete") {
                 editor.deleteSelection()
@@ -810,17 +840,15 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         ActionManager.getInstance().createActionPopupMenu("FsmDiagram", group).component.show(this, at.x, at.y)
     }
 
-    private enum class DragKind { Pan, Move, Resize, Connect, Waypoint, Reconnect, Label, Band }
-
-    private class Moved(val v: Vertex, val x0: Double, val y0: Double)
+    private enum class DragKind { Pan, Move, Resize, Region, Connect, Waypoint, Reconnect, Label, Band }
 
     private class DragState(val kind: DragKind) {
         var start = PointD(0.0, 0.0)
         var screenStart = Point()
         var viewX0 = 0.0
         var viewY0 = 0.0
-        var items: List<Moved> = emptyList()
-        var transitions: List<Pair<Transition, List<PointD>>> = emptyList()
+        var items: List<DiagramSession.MovedItem> = emptyList()
+        var transitions: List<DiagramSession.MovedPoints> = emptyList()
         var roots: List<Vertex> = emptyList()
         var moving: Set<String> = emptySet()
         var moved = false
@@ -844,6 +872,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         var base: Set<String> = emptySet()
         /** A right-button pan, which opens the context menu when the pointer doesn't move. */
         var rightButton = false
+        /** Move, resize and region drags: the layout at the start, restored at each step. */
+        var snapshot: DiagramSession.LayoutSnapshot? = null
+        /** Move: the boxes of the roots at the start. */
+        var boxes: Map<String, RectD> = emptyMap()
     }
 
     private fun additive(e: InputEvent) = e.isShiftDown || e.isControlDown || e.isMetaDown
@@ -906,8 +938,16 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
 
             when (hit.kind) {
                 HitKind.Handle -> {
-                    val v = s.index.vertex(s.selection.first())
-                    if (v != null) {
+                    val v = if (hit.handle == "sep") null else s.index.vertex(s.selection.first())
+                    if (hit.handle == "sep") {
+                        val st = s.index.vertex(hit.id)!!
+                        drag = DragState(DragKind.Region).also {
+                            it.vertex = st
+                            it.index = hit.index
+                            it.start = p
+                            it.snapshot = s.beginLayoutDrag(st)
+                        }
+                    } else if (v != null) {
                         if (hit.handle.startsWith("resize-")) {
                             drag = DragState(DragKind.Resize).also {
                                 it.corner = hit.handle.removePrefix("resize-")
@@ -917,6 +957,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                                 it.y0 = v.y
                                 it.w0 = v.w
                                 it.h0 = v.h
+                                it.snapshot = s.beginLayoutDrag(v)
                             }
                         } else {
                             startConnect(v, p)
@@ -992,46 +1033,17 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                         dx = Geo.snap(it.x0 + dx) - it.x0
                         dy = Geo.snap(it.y0 + dy) - it.y0
                     }
-                    for (it in d.items) {
-                        it.v.x = it.x0 + dx
-                        it.v.y = it.y0 + dy
-                    }
-                    for ((t, pts0) in d.transitions) t.points = pts0.mapTo(mutableListOf()) { PointD(it.x + dx, it.y + dy) }
-                    // Connection points dragged on their own stay glued to their state's border.
-                    if (d.roots.size == 1 && lead != null && ix.isBorderVertex(lead)) {
-                        val st = ix.vertex(lead.parent)
-                        if (st != null) Geo.snapToBorder(lead, st, p)
-                    }
-                    val probe = lead?.center ?: p
-                    val rr = if (d.roots.all { !ix.isBorderVertex(it) }) Geo.regionAt(ix, probe, d.moving) else null
+                    // From the layout at the start: the regions grown for the previous position shrink back.
+                    s.moveFrom(d.snapshot!!, d.items, d.transitions, d.roots, d.boxes, dx, dy, p, e.isAltDown)
+                    val rr = if (lead != null && d.roots.all { !ix.isBorderVertex(it) }) s.dropHighlight(lead, d.moving) else null
                     d.dropRegion = rr?.id
                     d.dropState = if (rr != null) ix.regionOwner[rr.id]?.id else null
                 }
-                DragKind.Resize -> {
-                    val v = d.vertex!!
-                    val west = 'w' in d.corner
-                    val north = 'n' in d.corner
-                    val dx = p.x - d.start.x
-                    val dy = p.y - d.start.y
-                    val minW = s.minimumSize(v).first
-                    if (west) {
-                        // The right edge stays put.
-                        val right = d.x0 + d.w0
-                        v.x = min(right - minW, if (e.isAltDown) d.x0 + dx else Geo.snap(d.x0 + dx))
-                        v.w = right - v.x
-                    } else {
-                        v.w = max(minW, if (e.isAltDown) d.w0 + dx else Geo.snap(v.x + d.w0 + dx) - v.x)
-                    }
-                    val minH = s.minimumSize(v).second // wrapped text depends on the new width
-                    if (north) {
-                        // The bottom edge stays put.
-                        val bottom = d.y0 + d.h0
-                        v.y = min(bottom - minH, if (e.isAltDown) d.y0 + dy else Geo.snap(d.y0 + dy))
-                        v.h = bottom - v.y
-                    } else {
-                        v.h = max(minH, if (e.isAltDown) d.h0 + dy else Geo.snap(v.y + d.h0 + dy) - v.y)
-                    }
-                    s.keepPointsOnBorder(v)
+                DragKind.Resize -> s.resizeFrom(d.snapshot!!, d.vertex!!, d.corner, d.x0, d.y0, d.w0, d.h0, p.x - d.start.x, p.y - d.start.y, e.isAltDown)
+                DragKind.Region -> {
+                    // The line after region `index`: the region resizes, its state with it, and the later regions move.
+                    val st = d.vertex!!
+                    s.resizeRegionFrom(d.snapshot!!, st, d.index, if (st.regionLayout == RegionLayout.Horizontal) p.x - d.start.x else p.y - d.start.y, e.isAltDown)
                 }
                 DragKind.Connect -> {
                     d.cur = p
@@ -1094,7 +1106,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                         editor.renderProps()
                     }
                 }
-                DragKind.Resize, DragKind.Waypoint -> s.commit()
+                DragKind.Resize, DragKind.Region, DragKind.Waypoint -> s.commit()
                 DragKind.Label -> if (d.moved) s.commit() else repaint()
                 DragKind.Connect -> {
                     val target = connectTargetAt(s, toWorld(e.point), d.source!!)
@@ -1173,13 +1185,15 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         }
         drag = DragState(DragKind.Move).also { d ->
             d.start = p
-            d.items = moving.values.map { Moved(it, it.x, it.y) }
+            d.items = moving.values.map { DiagramSession.MovedItem(it, it.x, it.y) }
             d.transitions = s.model.transitions
                 .filter { it.points.isNotEmpty() && it.source in moving && it.target in moving }
-                .map { it to it.points.toList() }
+                .map { DiagramSession.MovedPoints(it, it.points.toList()) }
             d.roots = roots
             d.moving = moving.keys.toSet()
             d.clickedId = clickedId
+            d.snapshot = s.snapshot()
+            d.boxes = roots.associate { it.id to RectD(it.x, it.y, it.w, it.h) }
         }
     }
 
@@ -1195,6 +1209,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val hit = hitTest(s, p)
         cursor = when (hit.kind) {
             HitKind.Handle -> Cursor.getPredefinedCursor(when (hit.handle) {
+                "sep" -> if (s.index.vertex(hit.id)?.regionLayout == RegionLayout.Horizontal) Cursor.E_RESIZE_CURSOR else Cursor.S_RESIZE_CURSOR
                 "resize-nw" -> Cursor.NW_RESIZE_CURSOR
                 "resize-ne" -> Cursor.NE_RESIZE_CURSOR
                 "resize-sw" -> Cursor.SW_RESIZE_CURSOR
@@ -1286,6 +1301,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
                 KeyEvent.VK_ESCAPE -> {
                     if (drag != null) {
+                        drag?.snapshot?.let { s.restore(it) }
                         drag = null
                         repaint()
                     } else if (tool != null) {
@@ -1300,10 +1316,8 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     return
                 }
                 KeyEvent.VK_LEFT, KeyEvent.VK_RIGHT, KeyEvent.VK_UP, KeyEvent.VK_DOWN -> {
-                    val step = if (e.isShiftDown) Geo.GRID else 1.0
-                    val dx = if (key == KeyEvent.VK_LEFT) -step else if (key == KeyEvent.VK_RIGHT) step else 0.0
-                    val dy = if (key == KeyEvent.VK_UP) -step else if (key == KeyEvent.VK_DOWN) step else 0.0
-                    if (s.nudge(dx, dy)) e.consume()
+                    // Arrow keys don't move elements: elements move by dragging, which keeps them in their regions.
+                    e.consume()
                     return
                 }
                 KeyEvent.VK_ENTER, KeyEvent.VK_F2 -> {

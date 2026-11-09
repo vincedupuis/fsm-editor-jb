@@ -381,7 +381,7 @@ class EditingTest {
     }
 
     @Test
-    fun aligningGrowsEveryRegionOfAnOrthogonalState() {
+    fun aligningGrowsTheRegionOfTheMovedState() {
         val s = newSession()
         // Stacked regions of 100 below a header: the second one holds b.
         val orth = addState(s, "orth", s.rootRegion, 1000.0, 1000.0, 300.0, 0.0, regions = 2)
@@ -397,7 +397,7 @@ class EditingTest {
         assertTrue(rects[1].rect.y <= b.y - DiagramSession.FIT_MARGIN + 1e-6)
         assertTrue(rects[1].rect.bottom >= b.y + b.h + DiagramSession.FIT_MARGIN - 1e-6)
         assertEquals(1000.0, orth.y)
-        assertEquals(rects[0].rect.h, rects[1].rect.h, 1e-6)
+        assertEquals(100.0, rects[0].rect.h, 1e-6)
     }
 
     @Test
