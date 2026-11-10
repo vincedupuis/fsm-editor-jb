@@ -134,9 +134,9 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     val clipboardHandler = ClipboardHandler()
 
     init {
-        layers.add(canvas, JLayeredPane.DEFAULT_LAYER)
-        layers.add(toast, JLayeredPane.POPUP_LAYER)
-        layers.add(parseError, JLayeredPane.MODAL_LAYER)
+        layers.add(canvas, JLayeredPane.DEFAULT_LAYER as Any)
+        layers.add(toast, JLayeredPane.POPUP_LAYER as Any)
+        layers.add(parseError, JLayeredPane.MODAL_LAYER as Any)
         toast.isVisible = false
         parseError.isVisible = false
 
@@ -559,7 +559,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         }
         val at = canvas.toScreen(box.x, box.y)
         field.setBounds(at.x.roundToInt(), at.y.roundToInt(), max(80.0, box.w * canvas.zoom).roundToInt(), max(22.0, box.h * canvas.zoom).roundToInt())
-        layers.add(field, JLayeredPane.PALETTE_LAYER)
+        layers.add(field, JLayeredPane.PALETTE_LAYER as Any)
         val edit = InlineEdit(field, field, id, multiline)
         inline = edit
         field.addKeyListener(object : KeyAdapter() {
