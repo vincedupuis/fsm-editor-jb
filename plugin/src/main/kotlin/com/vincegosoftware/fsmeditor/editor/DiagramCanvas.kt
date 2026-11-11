@@ -647,6 +647,12 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         g.stroke = th.stroke(1.0, floatArrayOf(4f, 3f))
         g.color = accent
         for (v in sel) g.draw(RoundRectangle2D.Double(v.x - 4, v.y - 4, v.w + 8, v.h + 8, 6.0, 6.0))
+        // The groups of the selected elements: a dotted rectangle around their members.
+        g.stroke = BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 10f, floatArrayOf(0f, 4f), 0f)
+        for (id in sel.map { it.group }.filter { it.isNotEmpty() }.distinct()) {
+            val b = DiagramSession.unionBox(s.groupMembers(id)) ?: continue
+            g.draw(RoundRectangle2D.Double(b.x - 10, b.y - 10, b.w + 20, b.h + 20, 8.0, 8.0))
+        }
         if (sel.size == 1 && s.selection.size == 1) {
             val v = sel[0]
             if (v.type in RESIZABLE) {
@@ -852,6 +858,19 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     repaint()
                 })
             }
+            group.addSeparator()
+        }
+        if (state != null && !s.index.isBorderVertex(state)) {
+            group.add(item("Group", s.canGroup) {
+                s.group()
+                editor.renderProps()
+                repaint()
+            })
+            group.add(item("Ungroup", s.canUngroup) {
+                s.ungroup()
+                editor.renderProps()
+                repaint()
+            })
             group.addSeparator()
         }
         if (s.canLeaveParent) {
@@ -1217,9 +1236,11 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val ix = s.index
         val moving = LinkedHashMap<String, Vertex>()
         val roots = ArrayList<Vertex>()
-        for (id in s.selection) {
-            val v = ix.vertex(id) ?: continue
-            if (ix.ancestors(v).any { it.id in s.selection }) continue
+        // The selected elements and the other members of their groups, which move with them.
+        val picked = s.withGroupMates(s.selection.mapNotNull { ix.vertex(it) })
+        val pickedIds = picked.map { it.id }.toSet()
+        for (v in picked) {
+            if (ix.ancestors(v).any { it.id in pickedIds }) continue
             roots.add(v)
             moving[v.id] = v
             for (d in ix.descendants(v)) moving[d.id] = d
@@ -1371,6 +1392,14 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 KeyEvent.VK_F -> {
                     if (e.isAltDown || e.isControlDown || e.isMetaDown) return
                     fit()
+                    e.consume()
+                    return
+                }
+                KeyEvent.VK_G -> {
+                    if (e.isAltDown || e.isControlDown || e.isMetaDown || e.isShiftDown) return
+                    s.toggleGroup()
+                    editor.renderProps()
+                    repaint()
                     e.consume()
                     return
                 }

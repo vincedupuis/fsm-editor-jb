@@ -206,6 +206,11 @@ class Vertex(
     var color: String = ""
     /** Colors of items of the state's text, keyed by [ElementColors.ITEM_KEYS]. */
     var itemColors: MutableMap<String, String> = linkedMapOf()
+    /**
+     * Id of the group the vertex belongs to, or empty, for the diagram: its members move together. Groups are flat,
+     * their members share one region, and vertices on a state's border are never grouped (see [FsmModel.normalizeGroups]).
+     */
+    var group: String = ""
 
     val centerX: Double get() = x + w / 2
     val centerY: Double get() = y + h / 2
@@ -228,6 +233,7 @@ class Vertex(
         v.anchors = anchors.toMutableList()
         v.color = color
         v.itemColors = LinkedHashMap(itemColors)
+        v.group = group
         return v
     }
 }
@@ -296,6 +302,7 @@ class FsmModel {
     fun normalize(): FsmModel {
         if (id.isEmpty()) id = "sm"
         if (regions.isEmpty()) regions.add(Region("r_root"))
+        normalizeGroups()
         val types = vertices.associate { it.id to it.type }
         for (t in transitions) {
             // A state's self-transition is a loop whose bend points are its three corners, or only its
@@ -307,6 +314,33 @@ class FsmModel {
             }
         }
         return this
+    }
+
+    /**
+     * Keeps the groups the diagram can show. A group is the vertices sharing a [Vertex.group] id: those on a state's
+     * border leave it, and so do those outside the region of its first member (in file order). A group left with
+     * fewer than two members is dissolved.
+     */
+    fun normalizeGroups() {
+        val ids = vertices.map { it.id }.toSet()
+        val parents = HashMap<String, String>()
+        val counts = HashMap<String, Int>()
+        for (v in vertices) {
+            val border = v.type == VertexType.ConnectionPointRef ||
+                ((v.type == VertexType.EntryPoint || v.type == VertexType.ExitPoint) && v.parent in ids)
+            if (v.group.isEmpty() || border) {
+                v.group = ""
+                continue
+            }
+            val parent = parents[v.group]
+            if (parent == null) parents[v.group] = v.parent
+            else if (parent != v.parent) {
+                v.group = ""
+                continue
+            }
+            counts[v.group] = (counts[v.group] ?: 0) + 1
+        }
+        for (v in vertices) if (v.group.isNotEmpty() && counts.getValue(v.group) < 2) v.group = ""
     }
 
     /** Entry/exit points owned by the state machine itself (placed in a top-level region). */

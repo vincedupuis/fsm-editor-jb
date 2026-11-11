@@ -23,6 +23,7 @@ object ClipboardJson {
         if (v.type == VertexType.ConnectionPointRef) o.str("ref", v.ref).str("pointKind", if (v.pointKind == PointKind.Exit) "exit" else "entry")
         if (v.type == VertexType.Comment) o.str("text", v.text).raw("anchors", stringArray(v.anchors))
         writeColors(o, v.color, v.itemColors)
+        o.opt("group", v.group)
         return o.toString()
     }
 
@@ -103,6 +104,7 @@ object ClipboardJson {
             v.anchors = list(item, "anchors").filterIsInstance<String>().toMutableList()
             v.color = readColor(item, "color")
             v.itemColors = readItemColors(item)
+            v.group = str(item, "group")
             data.vertices.add(v)
         }
         for (item in list(root, "transitions").filterIsInstance<Map<*, *>>()) {

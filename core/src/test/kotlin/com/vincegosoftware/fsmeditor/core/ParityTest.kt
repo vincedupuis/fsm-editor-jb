@@ -34,7 +34,7 @@ class ParityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions"])
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups"])
     fun writesTheSameXmi(name: String) {
         val text = read(fixture("$name.fsm"))
         assertEquals(read(fixture("$name.roundtrip.xmi")), Xmi.toXmi(Xmi.fromXmi(text)))
@@ -54,7 +54,7 @@ class ParityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions"])
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups"])
     fun casesValidateTheSame(name: String) {
         val model = Xmi.fromXmi(read(fixture("$name.fsm")))
         assertEquals(format(expected.obj("cases").obj(name).obj("issues")), format(Validation.validate(model)))

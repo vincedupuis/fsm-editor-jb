@@ -15,9 +15,11 @@ class XmiException(message: String) : Exception(message)
  *   UMLLabel whose center is the middle of those waypoints moved by the
  *   label offset;
  * - the region layout of an orthogonal state follows from its region shapes;
- * - colors are kept in one xmi:Extension at the end of the diagram, with a
- *   <style element="id" color="#rrggbb" entry="#rrggbb" …/> per colored
- *   vertex or transition (UML DI has no color).
+ * - colors and groups are kept in one xmi:Extension at the end of the diagram,
+ *   with a <style element="id" color="#rrggbb" entry="#rrggbb" …/> per colored
+ *   vertex or transition (UML DI has no color), then a
+ *   <group id="g" members="id id …"/> per group of vertices (members in file
+ *   order, groups in the order of their first member).
  *
  * `toXmi(fromXmi(x))` round-trips without loss (coordinates are rounded to 0.1 px),
  * and the output is identical to the one of FSM Editor for VS Code.
@@ -302,6 +304,9 @@ object Xmi {
         }
         for (v in m.vertices) addStyle(v.id, v.color, v.itemColors)
         for (t in m.transitions) addStyle(t.id, t.color, t.itemColors)
+        val groups = LinkedHashMap<String, MutableList<String>>()
+        for (v in m.vertices) if (v.group.isNotEmpty()) groups.getOrPut(v.group) { ArrayList() }.add(v.id)
+        for ((id, members) in groups) styles.add(XNode("group", "id" to id, "members" to members.joinToString(" ")))
         val diagram = XNode("umldi:UMLStateMachineDiagram", "xmi:id" to smId + "_diagram", "name" to m.name, "modelElement" to smId, "isFrame" to "false")
             .add(shapes, edges)
         if (styles.isNotEmpty()) diagram.add(XNode("xmi:Extension", "extender" to EXTENDER).add(styles))
@@ -534,6 +539,15 @@ object Xmi {
                     val stt = transitions[id]
                     if (sv != null) apply({ sv.color = it }, sv.itemColors)
                     else if (stt != null) apply({ stt.color = it }, stt.itemColors)
+                }
+                // A vertex listed in several groups stays in the first.
+                for (g in kids(ext, "group")) {
+                    val id = g.attr("id") ?: ""
+                    if (id.isEmpty()) continue
+                    for (member in (g.attr("members") ?: "").split(Regex("\\s+"))) {
+                        val gv = byId[member]
+                        if (gv != null && gv.group.isEmpty()) gv.group = id
+                    }
                 }
             }
             for (el in walk(d)) {

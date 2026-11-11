@@ -486,4 +486,121 @@ class EditingTest {
         t.points.add(PointD(20.0, 20.0))
         assertEquals("100,118 20,118 20,20 139.2,20 139.2,100", route())
     }
+
+    // ---------------------------------------------------------------- groups
+
+    private fun named(s: DiagramSession, name: String) = s.model.vertices.first { it.name == name }
+
+    private fun select(s: DiagramSession, vararg names: String) {
+        s.reindex()
+        s.selection = names.mapTo(LinkedHashSet()) { named(s, it).id }
+    }
+
+    @Test
+    fun gTogglesGroupsOfElementsOfOneRegion() {
+        val s = example("MediaPlayer.fsm")
+        var message: String? = null
+        s.onMessage { message = it }
+        select(s, "Stopped", "Paused")
+        assertTrue(s.canGroup)
+        s.toggleGroup()
+        val g = named(s, "Stopped").group
+        assertNotEquals("", g)
+        assertEquals(g, named(s, "Paused").group)
+        assertEquals(listOf("Stopped", "Paused"), s.groupMembers(g).map { it.name })
+        assertTrue("<group id=\"$g\" members=\"${named(s, "Stopped").id} ${named(s, "Paused").id}\"/>" in Xmi.toXmi(s.model))
+
+        select(s, "Paused")
+        assertTrue(s.canUngroup)
+        s.toggleGroup()
+        assertEquals("", named(s, "Stopped").group)
+        assertEquals("", named(s, "Paused").group)
+
+        select(s, "Fault")
+        s.toggleGroup()
+        assertEquals("Select two or more elements in the same region to group them.", message)
+        select(s, "Off", "Stopped")
+        assertFalse(s.canGroup)
+    }
+
+    @Test
+    fun groupingMembersOfGroupsMergesThem() {
+        val s = example("MediaPlayer.fsm")
+        select(s, "Off", "Fault")
+        s.group()
+        // Already one group: nothing to group, even from one member.
+        select(s, "Off", "Fault")
+        assertFalse(s.canGroup)
+        select(s, "Fault")
+        assertFalse(s.canGroup)
+        val final = s.model.vertices.first { it.type == VertexType.Final }
+        s.selection = linkedSetOf(final.id, s.model.vertices.first { it.type == VertexType.Initial && it.parent == s.rootRegion }.id)
+        s.group()
+        select(s, "Off")
+        s.selection.add(final.id)
+        s.group()
+        val g = named(s, "Off").group
+        assertEquals(4, s.groupMembers(g).size)
+        assertEquals(g, named(s, "Fault").group)
+    }
+
+    @Test
+    fun aGroupDropsIntoARegionOnlyAsAWhole() {
+        val s = newSession()
+        val comp = s.createVertex("composite", PointD(600.0, 400.0))!!
+        comp.w = 400.0
+        comp.h = 300.0
+        val a = s.createVertex("state", PointD(100.0, 400.0))!!
+        val b = s.createVertex("state", PointD(100.0, 500.0))!!
+        s.selection = linkedSetOf(a.id, b.id)
+        s.group()
+        val moving = setOf(a.id, b.id)
+        // Only a lands inside: the group stays where it was.
+        a.x = comp.x + 40
+        a.y = comp.y + 80
+        s.dropMoved(listOf(a, b), moving)
+        assertEquals(s.rootRegion, a.parent)
+        assertEquals(s.rootRegion, b.parent)
+        b.x = comp.x + 40
+        b.y = comp.y + 180
+        s.dropMoved(listOf(a, b), moving)
+        assertEquals(comp.regions[0].id, a.parent)
+        assertEquals(comp.regions[0].id, b.parent)
+        assertEquals(a.group, b.group)
+        assertNotEquals("", a.group)
+
+        // Leave Parent of one member takes the whole group out.
+        s.selection = linkedSetOf(a.id)
+        assertTrue(s.canLeaveParent)
+        s.leaveParent()
+        assertEquals(s.rootRegion, a.parent)
+        assertEquals(s.rootRegion, b.parent)
+    }
+
+    @Test
+    fun copiesOfAWholeGroupMakeANewGroupAndDeletingLeavesNoGroupOfOne() {
+        val s = example("MediaPlayer.fsm")
+        select(s, "Stopped", "Paused")
+        s.group()
+        val g = named(s, "Stopped").group
+        val text = ClipboardJson.write(s.collectSelection()!!)
+        assertTrue("\"group\":\"$g\"" in text)
+        var before = s.model.vertices.size
+        s.paste(ClipboardJson.tryRead(text))
+        val copies = s.model.vertices.drop(before)
+        assertEquals(2, copies.size)
+        assertNotEquals("", copies[0].group)
+        assertNotEquals(g, copies[0].group)
+        assertEquals(copies[0].group, copies[1].group)
+
+        select(s, "Stopped")
+        before = s.model.vertices.size
+        s.paste(s.collectSelection())
+        assertEquals("", s.model.vertices.last().group)
+        assertEquals(before + 1, s.model.vertices.size)
+
+        s.selection = linkedSetOf(copies[0].id)
+        s.deleteSelection()
+        assertEquals("", copies[1].group)
+    }
 }

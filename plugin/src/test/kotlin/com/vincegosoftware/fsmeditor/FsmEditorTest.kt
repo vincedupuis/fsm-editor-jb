@@ -157,6 +157,35 @@ class FsmEditorTest : BasePlatformTestCase() {
         javax.imageio.ImageIO.write(image, "png", File(out, "MediaPlayer-export.png"))
     }
 
+    /** G on the canvas groups the selection; a selected member shows the group's dotted rectangle (build/screenshots/MediaPlayer-group.png). */
+    fun testGGroupsTheSelection() {
+        val editor = openDiagram("MediaPlayer.fsm", File(examples, "MediaPlayer.fsm").readText())
+        val panel = editor.component as EditorPanel
+        val session = panel.session!!
+        val stopped = session.model.vertices.first { it.name == "Stopped" }
+        val paused = session.model.vertices.first { it.name == "Paused" }
+        session.selection = linkedSetOf(stopped.id, paused.id)
+        val canvas = panel.canvas
+        // Headless, key events reach no focus owner: hand G to the canvas's key listeners.
+        val press = java.awt.event.KeyEvent(canvas, java.awt.event.KeyEvent.KEY_PRESSED, System.currentTimeMillis(), 0, java.awt.event.KeyEvent.VK_G, 'g')
+        canvas.keyListeners.forEach { it.keyPressed(press) }
+        assertTrue(stopped.group.isNotEmpty())
+        assertEquals(stopped.group, paused.group)
+        waitFor { editor.file.let { com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(it)!!.text.contains("<group id=\"${stopped.group}\"") } }
+        session.selection = linkedSetOf(stopped.id)
+        panel.setSize(1400, 900)
+        layoutAll(panel)
+        invalidateAll(panel)
+        layoutAll(panel)
+        canvas.fit()
+        val image = java.awt.image.BufferedImage(1400, 900, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val g = image.createGraphics()
+        panel.paint(g)
+        g.dispose()
+        val out = File(System.getProperty("fsm.screenshots") ?: "build/screenshots").apply { mkdirs() }
+        javax.imageio.ImageIO.write(image, "png", File(out, "MediaPlayer-group.png"))
+    }
+
     private fun invalidateAll(c: java.awt.Component) {
         c.invalidate()
         if (c is java.awt.Container) c.components.forEach { invalidateAll(it) }

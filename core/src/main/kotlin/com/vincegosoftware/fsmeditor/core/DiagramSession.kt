@@ -59,6 +59,7 @@ class DiagramSession(model: FsmModel) {
 
     fun commit() {
         reindex()
+        model.normalizeGroups()
         keepHeaders()
         committedListeners.toList().forEach { it() }
     }
@@ -496,6 +497,14 @@ class DiagramSession(model: FsmModel) {
         const val MIN_REGION = 40.0
 
         private fun boxOf(v: Vertex) = RectD(v.x, v.y, v.w, v.h)
+
+        /** Box around [vs], or null when there are none. */
+        fun unionBox(vs: List<Vertex>): RectD? {
+            if (vs.isEmpty()) return null
+            val x = vs.minOf { it.x }
+            val y = vs.minOf { it.y }
+            return RectD(x, y, vs.maxOf { it.x + it.w } - x, vs.maxOf { it.y + it.h } - y)
+        }
     }
 
     /**
@@ -892,14 +901,16 @@ class DiagramSession(model: FsmModel) {
      * Region a moved element is dropped into: the deepest one holding its whole box, when that is its own
      * region or lies inside it (an element never leaves its region by a drag); null to keep its region.
      */
-    fun dropRegionOf(v: Vertex, moving: Set<String>): RegionRect? {
-        val r = Geometry.regionHolding(index, boxOf(v), moving) ?: return null
-        return if (r.id != v.parent && Geometry.regionWithin(index, r.id, v.parent)) r else null
+    fun dropRegionOf(v: Vertex, moving: Set<String>): RegionRect? = dropRegionOf(boxOf(v), v.parent, moving)
+
+    private fun dropRegionOf(box: RectD, parent: String, moving: Set<String>): RegionRect? {
+        val r = Geometry.regionHolding(index, box, moving) ?: return null
+        return if (r.id != parent && Geometry.regionWithin(index, r.id, parent)) r else null
     }
 
     /** Region to highlight while [lead] is dragged: where it would be dropped, else its own region. */
     fun dropHighlight(lead: Vertex, moving: Set<String>): RegionRect? =
-        dropRegionOf(lead, moving) ?: regionOwnerOf(lead.parent)?.let { s -> rectsOf(s).firstOrNull { it.id == lead.parent } }
+        dropRegionOf(dropBox(lead), lead.parent, moving) ?: regionOwnerOf(lead.parent)?.let { s -> rectsOf(s).firstOrNull { it.id == lead.parent } }
 
     /**
      * Switches [s] between stacked and side-by-side regions: they share it equally again, any region too small
@@ -952,9 +963,9 @@ class DiagramSession(model: FsmModel) {
         return output
     }
 
-    /** The selected elements (without a selected ancestor) when they all lie in a composite state's region. */
+    /** The selected elements (without a selected ancestor) and their groups, when they all lie in a composite state's region. */
     private fun leavingElements(): List<Vertex> {
-        val roots = selectionRoots()
+        val roots = withGroupMates(selectionRoots())
         return if (roots.isNotEmpty() && roots.all { !index.isBorderVertex(it) && regionOwnerOf(it.parent) != null }) roots else emptyList()
     }
 
@@ -1016,6 +1027,13 @@ class DiagramSession(model: FsmModel) {
         reindex()
         for (v in roots) {
             if (index.isBorderVertex(v)) continue
+            if (v.group.isNotEmpty()) {
+                // A group drops as a whole: into the region that holds all its members, or nowhere.
+                if (v !== roots.first { it.group == v.group }) continue
+                val gr = dropRegionOf(dropBox(v), v.parent, moving)
+                if (gr != null) for (m in groupMembers(v.group)) m.parent = gr.id
+                continue
+            }
             if (v.type == VertexType.EntryPoint || v.type == VertexType.ExitPoint) {
                 // A machine-level point dropped on a state becomes that state's point; elsewhere it stays top-level.
                 val s = Geometry.stateAt(index, v.center, moving)
@@ -1030,6 +1048,61 @@ class DiagramSession(model: FsmModel) {
             dropRegionOf(v, moving)?.let { v.parent = it.id }
         }
         commit()
+    }
+
+    // ---------------------------------------------------------------- groups
+
+    /** Members of group [id], in file order. */
+    fun groupMembers(id: String): List<Vertex> = if (id.isEmpty()) emptyList() else model.vertices.filter { it.group == id }
+
+    /** [vs] with the other members of their groups, each once. */
+    fun withGroupMates(vs: List<Vertex>): List<Vertex> {
+        val out = LinkedHashMap<String, Vertex>()
+        for (v in vs) out.putIfAbsent(v.id, v)
+        for (v in vs) for (m in groupMembers(v.group)) out.putIfAbsent(m.id, m)
+        return out.values.toList()
+    }
+
+    /** The box a moved element drops by: with a group, the box around all its members. */
+    fun dropBox(v: Vertex): RectD = (if (v.group.isNotEmpty()) unionBox(groupMembers(v.group)) else null) ?: boxOf(v)
+
+    /**
+     * The elements a Group makes one group of: the selected ones and their groups' other members, when there
+     * are at least two, in one region, none on a state's border, and they aren't already one group.
+     */
+    private fun groupable(): List<Vertex> {
+        val vs = withGroupMates(selectionRoots())
+        if (vs.size < 2 || vs.any { index.isBorderVertex(it) || it.parent != vs[0].parent }) return emptyList()
+        return if (vs[0].group.isNotEmpty() && vs.all { it.group == vs[0].group }) emptyList() else vs
+    }
+
+    val canGroup: Boolean get() = groupable().isNotEmpty()
+
+    val canUngroup: Boolean get() = selection.any { index.vertex(it)?.group?.isNotEmpty() == true }
+
+    fun group() {
+        val vs = groupable()
+        if (vs.isEmpty()) return
+        val id = newId("g")
+        for (v in vs) v.group = id
+        commit()
+    }
+
+    /** Dissolves the groups of the selected elements. */
+    fun ungroup() {
+        val ids = selection.mapNotNull { index.vertex(it)?.group?.takeIf { g -> g.isNotEmpty() } }.toSet()
+        if (ids.isEmpty()) return
+        for (v in model.vertices) if (v.group in ids) v.group = ""
+        commit()
+    }
+
+    /** G: ungroups the selection when an element of it is in a group, groups it otherwise. */
+    fun toggleGroup() {
+        when {
+            canUngroup -> ungroup()
+            canGroup -> group()
+            else -> say("Select two or more elements in the same region to group them.")
+        }
     }
 
     // ---------------------------------------------------------------- clipboard
@@ -1081,9 +1154,12 @@ class DiagramSession(model: FsmModel) {
             offY = offX
         }
         val added = ArrayList<Vertex>()
+        val groups = HashMap<String, String>()
         for (src in data.vertices) {
             val v = src.copy()
             v.id = map[src.id]!!
+            // A copied group is a new group; a lone copied member belongs to none (see FsmModel.normalizeGroups).
+            if (v.group.isNotEmpty()) v.group = groups.getOrPut(v.group) { newId("g") }
             v.x += offX
             v.y += offY
             v.regions = v.regions.mapTo(mutableListOf()) { Region(map[it.id]!!, it.name, it.size) }
