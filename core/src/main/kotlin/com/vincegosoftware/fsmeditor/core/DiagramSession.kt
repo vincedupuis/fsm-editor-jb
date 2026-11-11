@@ -980,24 +980,24 @@ class DiagramSession(model: FsmModel) {
     }
 
     /**
-     * Aligns the selected states (without a selected ancestor) with [anchorId]: on its horizontal center
-     * line when [horizontally], else on its vertical one. Each state moves with its contents and stays in
-     * its region; the enclosing composite states grow so that their regions still hold their states.
-     * A state that is the only selected member of its group moves the whole group, unless the anchor is in
-     * that group: selected members of one group are aligned within it.
-     * Returns false, changing nothing, when fewer than two states are selected or when states of different
+     * Aligns the selected elements (without a selected ancestor) with [anchorId]: on its horizontal center
+     * line when [horizontally], else on its vertical one. Elements on a state's border don't align. Each
+     * element moves with its contents and stays in its region; the enclosing composite states grow so that
+     * their regions still hold their elements. An element that is the only selected member of its group moves
+     * the whole group, unless the anchor is in that group: selected members of one group are aligned within it.
+     * Returns false, changing nothing, when fewer than two elements are selected or when elements of different
      * regions of one state would overlap along its region layout.
      */
     fun align(anchorId: String, horizontally: Boolean): Boolean {
-        val states = selectionRoots().filter { it.type == VertexType.State }
+        val items = alignable()
         val clicked = index.vertex(anchorId) ?: return false
         val anchor = index.ancestors(clicked).lastOrNull { it.id in selection } ?: clicked
-        if (states.size < 2 || states.none { it === anchor }) return false
+        if (items.size < 2 || items.none { it === anchor }) return false
 
         val snap = snapshot()
         val moved = ArrayList<Pair<Vertex, RectD>>()
         val roots = selectionRoots()
-        for (v in states) {
+        for (v in items) {
             val dx = if (horizontally) 0.0 else anchor.centerX - v.centerX
             val dy = if (horizontally) anchor.centerY - v.centerY else 0.0
             if (dx == 0.0 && dy == 0.0) continue
@@ -1018,17 +1018,20 @@ class DiagramSession(model: FsmModel) {
         // Innermost first: a state that grows may no longer fit in its own region.
         for ((v, old) in moved.sortedByDescending { index.depth(it.first) }) fitInRegion(v, old, true)
         fun along(v: Vertex) = if (horizontally) v.centerY else v.centerX
-        val off = states.firstOrNull { kotlin.math.abs(along(it) - along(anchor)) > 0.5 }
+        val off = items.firstOrNull { kotlin.math.abs(along(it) - along(anchor)) > 0.5 }
         if (off != null) {
-            // Growing one region moved the others: states in different regions of one state can't line up.
+            // Growing one region moved the others: elements in different regions of one state can't line up.
             restore(snap)
             val shared = index.ancestors(off).firstOrNull { index.isInside(anchor, it.id) }
-            say("The states cannot be aligned: they would leave their regions of '${shared?.name ?: ""}'.")
+            say("The elements cannot be aligned: they would leave their regions of '${shared?.name ?: ""}'.")
             return false
         }
         commit()
         return true
     }
+
+    /** The selected elements (without a selected ancestor) that Align moves: all but those on a state's border. */
+    fun alignable(): List<Vertex> = selectionRoots().filter { !index.isBorderVertex(it) }
 
     /** Selected elements without a selected ancestor, which lead a move. */
     fun selectionRoots(): List<Vertex> =

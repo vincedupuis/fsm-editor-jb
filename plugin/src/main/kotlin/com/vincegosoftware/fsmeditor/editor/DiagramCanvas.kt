@@ -850,8 +850,8 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         }
         val group = DefaultActionGroup()
         val state = id?.let { s.index.vertex(it) }
-        if (state != null && state.type == VertexType.State) {
-            val canAlign = s.selectionRoots().count { it.type == VertexType.State } >= 2
+        if (state != null && !s.index.isBorderVertex(state)) {
+            val canAlign = s.alignable().size >= 2
             for ((label, horizontally) in listOf("Align Horizontally" to true, "Align Vertically" to false)) {
                 group.add(item(label, canAlign) {
                     if (s.align(state.id, horizontally)) editor.renderProps()

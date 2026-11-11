@@ -301,13 +301,12 @@ class EditingTest {
     }
 
     @Test
-    fun alignsTheSelectedStatesOnTheClickedOne() {
+    fun alignsTheSelectedElementsOnTheClickedOne() {
         val s = newSession()
         val a = addState(s, "a", s.rootRegion, 1000.0, 1000.0)
         val b = addState(s, "b", s.rootRegion, 1300.0, 1120.0, 100.0, 40.0)
         val c = addState(s, "c", s.rootRegion, 1600.0, 900.0)
         val init = s.index.vertex("v_init")!!
-        val initAt = init.x to init.y
         s.selection = linkedSetOf(a.id, b.id, c.id, init.id)
         var commits = 0
         s.onCommitted { commits++ }
@@ -320,10 +319,14 @@ class EditingTest {
         assertEquals(1000.0 to 1110.0, a.x to a.y)
         assertEquals(1020.0 to 1120.0, b.x to b.y)
         assertEquals(1000.0 to 1110.0, c.x to c.y)
-        // Pseudostates are left alone, and a single state has nothing to align with.
-        assertEquals(initAt, init.x to init.y)
-        s.selection = linkedSetOf(a.id, init.id)
-        assertFalse(s.align(a.id, horizontally = true))
+        // Pseudostates align as well; points on a state's border don't.
+        assertEquals(a.centerX to b.centerY, init.centerX to init.centerY)
+        val ep = Vertex(id = "ep", type = VertexType.EntryPoint, name = "ep", parent = a.id, x = 993.0, y = 1150.0, w = 14.0, h = 14.0)
+        s.model.vertices.add(ep)
+        s.reindex()
+        s.selection = linkedSetOf(ep.id, init.id)
+        assertFalse(s.align(init.id, horizontally = true))
+        assertEquals(993.0 to 1150.0, ep.x to ep.y)
     }
 
     @Test
@@ -410,7 +413,7 @@ class EditingTest {
         s.onMessage { message = it }
         s.selection = linkedSetOf(a.id, b.id)
         assertFalse(s.align(a.id, horizontally = true))
-        assertEquals("The states cannot be aligned: they would leave their regions of 'orth'.", message)
+        assertEquals("The elements cannot be aligned: they would leave their regions of 'orth'.", message)
         assertEquals(1180.0 to 1160.0, b.x to b.y)
         assertEquals(listOf(1000.0, 1000.0, 340.0, 250.0), listOf(orth.x, orth.y, orth.w, orth.h))
         // Side by side, the same states can share a row but not a column.
