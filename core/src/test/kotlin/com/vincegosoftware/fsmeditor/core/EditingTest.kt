@@ -603,4 +603,34 @@ class EditingTest {
         s.deleteSelection()
         assertEquals("", copies[1].group)
     }
+
+    @Test
+    fun aligningAGroupedStateMovesItsGroupUnlessMembersAreAlignedTogether() {
+        val s = newSession()
+        val a = s.createVertex("state", PointD(200.0, 200.0))!!
+        val b = s.createVertex("state", PointD(400.0, 260.0))!!
+        val c = s.createVertex("state", PointD(700.0, 500.0))!!
+        s.selection = linkedSetOf(a.id, b.id)
+        s.group()
+        val bx = b.x
+        val by = b.y
+
+        // With a state outside the group: b follows a.
+        s.selection = linkedSetOf(a.id, c.id)
+        val dy = c.centerY - a.centerY
+        assertTrue(s.align(c.id, true))
+        assertEquals(c.centerY, a.centerY)
+        assertEquals(by + dy, b.y)
+        assertEquals(bx, b.x)
+
+        // Two members of the group: only the one aligned moves.
+        s.selection = linkedSetOf(a.id, b.id)
+        val ax = a.x
+        val ay = a.y
+        assertTrue(s.align(a.id, false))
+        assertEquals(a.centerX, b.centerX)
+        assertEquals(ax, a.x)
+        assertEquals(ay, a.y)
+        assertEquals(a.group, b.group)
+    }
 }

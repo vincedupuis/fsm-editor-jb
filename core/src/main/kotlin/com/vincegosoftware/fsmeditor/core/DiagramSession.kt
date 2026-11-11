@@ -983,6 +983,8 @@ class DiagramSession(model: FsmModel) {
      * Aligns the selected states (without a selected ancestor) with [anchorId]: on its horizontal center
      * line when [horizontally], else on its vertical one. Each state moves with its contents and stays in
      * its region; the enclosing composite states grow so that their regions still hold their states.
+     * A state that is the only selected member of its group moves the whole group, unless the anchor is in
+     * that group: selected members of one group are aligned within it.
      * Returns false, changing nothing, when fewer than two states are selected or when states of different
      * regions of one state would overlap along its region layout.
      */
@@ -994,12 +996,22 @@ class DiagramSession(model: FsmModel) {
 
         val snap = snapshot()
         val moved = ArrayList<Pair<Vertex, RectD>>()
+        val roots = selectionRoots()
         for (v in states) {
             val dx = if (horizontally) 0.0 else anchor.centerX - v.centerX
             val dy = if (horizontally) anchor.centerY - v.centerY else 0.0
             if (dx == 0.0 && dy == 0.0) continue
-            moved.add(v to boxOf(v))
-            shiftVertices((listOf(v) + index.descendants(v)).mapTo(HashSet()) { it.id }, dx, dy)
+            // A group follows its only selected member, unless the anchor is in it: aligning several members of a
+            // group, or members with the anchor's group, moves just them.
+            val mates = if (v.group.isNotEmpty() && v.group != anchor.group && roots.count { it.group == v.group } == 1)
+                groupMembers(v.group).filter { it !== v } else emptyList()
+            val ids = HashSet<String>()
+            for (x in listOf(v) + mates) {
+                moved.add(x to boxOf(x))
+                ids.add(x.id)
+                for (d in index.descendants(x)) ids.add(d.id)
+            }
+            shiftVertices(ids, dx, dy)
         }
         if (moved.isEmpty()) return false
 
