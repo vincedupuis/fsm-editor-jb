@@ -133,7 +133,7 @@ class NewStateMachineAction : DumbAwareAction() {
                 ?: return
         }
         val target = folder
-        val name = Messages.showInputDialog(project, "Name of the new state machine:", "New State Machine", FsmIcons.FILE, "StateMachine", NameValidator(target))
+        val name = Messages.showInputDialog(project, "Name of the new state machine:", "New State Machine", FsmIcons.FILE, "StateMachine", MachineNameValidator(target))
             ?.trim() ?: return
         create(project, target, name)?.let { FsmDocuments.openInDiagram(project, it) }
     }
@@ -149,17 +149,18 @@ class NewStateMachineAction : DumbAwareAction() {
             Messages.showErrorDialog(project, ex.message ?: ex.toString(), "New State Machine")
             null
         }
+}
 
-    private class NameValidator(private val folder: VirtualFile) : InputValidatorEx {
-        override fun getErrorText(inputString: String): String? {
-            val name = inputString.trim()
-            if (!Regex("^[\\w .-]+$").matches(name)) return "Use letters, digits, spaces, dots, dashes or underscores."
-            if (folder.findChild("$name.fsm") != null) return "$name.fsm already exists."
-            return null
-        }
-
-        override fun checkInput(inputString: String) = getErrorText(inputString) == null
-
-        override fun canClose(inputString: String) = checkInput(inputString)
+/** Accepts the name of a new state machine whose file doesn't exist yet in [folder]. */
+class MachineNameValidator(private val folder: VirtualFile) : InputValidatorEx {
+    override fun getErrorText(inputString: String): String? {
+        val name = inputString.trim()
+        if (!Regex("^[\\w .-]+$").matches(name)) return "Use letters, digits, spaces, dots, dashes or underscores."
+        if (folder.findChild("$name.fsm") != null) return "$name.fsm already exists."
+        return null
     }
+
+    override fun checkInput(inputString: String) = getErrorText(inputString) == null
+
+    override fun canClose(inputString: String) = checkInput(inputString)
 }

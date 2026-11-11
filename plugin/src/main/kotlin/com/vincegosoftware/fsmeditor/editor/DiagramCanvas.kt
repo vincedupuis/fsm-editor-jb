@@ -12,6 +12,7 @@ import com.intellij.openapi.util.SystemInfo
 import com.intellij.util.ui.JBFont
 import com.vincegosoftware.fsmeditor.core.DiagramSession
 import com.vincegosoftware.fsmeditor.core.ElementColors
+import com.vincegosoftware.fsmeditor.core.Extraction
 import com.vincegosoftware.fsmeditor.core.Labels
 import com.vincegosoftware.fsmeditor.core.Num
 import com.vincegosoftware.fsmeditor.core.PointD
@@ -40,6 +41,8 @@ import java.awt.dnd.DropTarget
 import java.awt.dnd.DropTargetAdapter
 import java.awt.dnd.DropTargetDragEvent
 import java.awt.dnd.DropTargetDropEvent
+import java.awt.event.ContainerAdapter
+import java.awt.event.ContainerEvent
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.awt.event.InputEvent
@@ -57,6 +60,7 @@ import java.awt.geom.Rectangle2D
 import java.awt.geom.RoundRectangle2D
 import java.lang.reflect.Proxy
 import javax.swing.JComponent
+import javax.swing.JMenuItem
 import javax.swing.SwingUtilities
 import java.awt.image.BufferedImage
 import kotlin.math.abs
@@ -841,7 +845,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             editor.renderStatus()
             repaint()
         }
-        fun item(label: String, enabled: Boolean = true, run: () -> Unit) = object : DumbAwareAction(label) {
+        fun item(label: String, enabled: Boolean = true, description: String? = null, run: () -> Unit) = object : DumbAwareAction(label, description, null) {
             override fun update(e: AnActionEvent) {
                 e.presentation.isEnabled = enabled
             }
@@ -881,6 +885,15 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             })
             group.addSeparator()
         }
+        // Greyed out, with the reason as its description and tooltip, when the selection can't become a submachine.
+        val extractProblem = if (state != null && !s.index.isBorderVertex(state)) Extraction.problem(s.model, s.selection) else null
+        if (state != null && !s.index.isBorderVertex(state)) {
+            group.add(item(EXTRACT, extractProblem == null, extractProblem) {
+                editor.extractToSubmachine()
+                repaint()
+            })
+            group.addSeparator()
+        }
         val copyable = s.collectSelection() != null
         group.add(item("Cut", copyable) { editor.copy(true) })
         group.add(item("Copy", copyable) { editor.copy(false) })
@@ -897,7 +910,16 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             group.addSeparator()
         }
         group.add(item("Properties…") { editor.openPropertiesWindow(id, at) })
-        ActionManager.getInstance().createActionPopupMenu("FsmDiagram", group).component.show(this, at.x, at.y)
+        val menu = ActionManager.getInstance().createActionPopupMenu("FsmDiagram", group).component
+        if (extractProblem != null) {
+            // Menu items show an action's description only in the status bar: the reason also goes in a tooltip.
+            menu.addContainerListener(object : ContainerAdapter() {
+                override fun componentAdded(e: ContainerEvent) {
+                    (e.child as? JMenuItem)?.takeIf { it.text == EXTRACT }?.toolTipText = extractProblem
+                }
+            })
+        }
+        menu.show(this, at.x, at.y)
     }
 
     private enum class DragKind { Pan, Move, Resize, Region, Connect, Waypoint, Reconnect, Label, Band }
@@ -1434,6 +1456,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         /** Largest side of an exported image, in pixels. */
         const val MAX_IMAGE_SIDE = 16384.0
 
+        private const val EXTRACT = "Extract to Submachine…"
         private val CORNERS = listOf("nw", "ne", "sw", "se")
         private val RESIZABLE = setOf(VertexType.State, VertexType.Comment, VertexType.Fork, VertexType.Join)
     }

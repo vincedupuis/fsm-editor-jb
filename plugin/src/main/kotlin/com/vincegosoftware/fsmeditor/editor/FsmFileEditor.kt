@@ -19,12 +19,16 @@ import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorLocation
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.ReadonlyStatusHandler
+import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.vincegosoftware.fsmeditor.FsmDocuments
+import com.vincegosoftware.fsmeditor.FsmIcons
+import com.vincegosoftware.fsmeditor.MachineNameValidator
 import com.vincegosoftware.fsmeditor.codegen.CodeGeneration
 import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.Issue
@@ -36,6 +40,7 @@ import com.vincegosoftware.fsmeditor.core.XmlParseException
 import com.vincegosoftware.fsmeditor.core.Xmi
 import com.vincegosoftware.fsmeditor.services.FsmWorkspace
 import java.beans.PropertyChangeListener
+import java.io.IOException
 import javax.swing.JComponent
 import kotlin.math.min
 
@@ -176,6 +181,33 @@ class FsmFileEditor(private val project: Project, private val file: VirtualFile)
         if (href.isEmpty()) return
         if (!FsmDocuments.openHref(project, file, href)) {
             panel.toast("The referenced state machine file ${href.split('#')[0]} does not exist.")
+        }
+    }
+
+    override fun askSubmachineName(proposed: String): String? {
+        val folder = file.parent
+        if (folder == null) {
+            panel.toast("Save the state machine first: the submachine goes in a file next to it.")
+            return null
+        }
+        var value = proposed
+        var n = 2
+        while (folder.findChild("$value.fsm") != null) value = proposed + n++
+        return Messages.showInputDialog(
+            project, "Name of the new state machine, saved next to this one:", "Extract to Submachine", FsmIcons.FILE, value, MachineNameValidator(folder),
+        )?.trim()
+    }
+
+    override fun createMachineFile(name: String, xmi: String): Boolean {
+        val folder = file.parent ?: return false
+        return try {
+            WriteCommandAction.writeCommandAction(project).withName("Extract to Submachine").run<IOException> {
+                VfsUtil.saveText(folder.createChildData(this@FsmFileEditor, "$name.fsm"), xmi)
+            }
+            true
+        } catch (ex: IOException) {
+            panel.toast("$name.fsm could not be created: ${ex.message}")
+            false
         }
     }
 

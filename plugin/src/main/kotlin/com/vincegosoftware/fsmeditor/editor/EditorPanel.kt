@@ -31,8 +31,10 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.vincegosoftware.fsmeditor.core.ClipboardJson
 import com.vincegosoftware.fsmeditor.core.DiagramSession
+import com.vincegosoftware.fsmeditor.core.Extraction
 import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.Geometry
+import com.vincegosoftware.fsmeditor.core.Hrefs
 import com.vincegosoftware.fsmeditor.core.Issue
 import com.vincegosoftware.fsmeditor.core.Labels
 import com.vincegosoftware.fsmeditor.core.MachineInfo
@@ -45,6 +47,7 @@ import com.vincegosoftware.fsmeditor.core.SvgExport
 import com.vincegosoftware.fsmeditor.core.TextAnchor
 import com.vincegosoftware.fsmeditor.core.Tools
 import com.vincegosoftware.fsmeditor.core.VertexType
+import com.vincegosoftware.fsmeditor.core.Xmi
 import com.vincegosoftware.fsmeditor.settings.FsmSettings
 import java.awt.BorderLayout
 import java.awt.Color
@@ -92,6 +95,10 @@ interface EditorHost {
     fun exportPng()
     fun openAsText()
     fun openSubmachine(href: String)
+    /** Asks for the name of a state machine to create next to the document, starting from [proposed]; null when cancelled. */
+    fun askSubmachineName(proposed: String): String?
+    /** Creates `name.fsm` next to the document with [xmi]; false (after telling why) when it can't. */
+    fun createMachineFile(name: String, xmi: String): Boolean
 }
 
 /**
@@ -411,6 +418,26 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     }
 
     fun openSubmachine(href: String) = host.openSubmachine(href)
+
+    /**
+     * Extract to Submachine: moves the selected elements into a new state machine file next to this one, and puts a
+     * submachine state referencing it in their place ([Extraction]). The file isn't removed by Undo.
+     */
+    fun extractToSubmachine() {
+        val s = session ?: return
+        val ids = s.selection.toList()
+        Extraction.problem(s.model, ids)?.let {
+            toast(it)
+            return
+        }
+        val name = host.askSubmachineName(Extraction.proposedName(s.model, ids)) ?: return
+        val result = Extraction.extract(s.model, ids, name, Hrefs.encodeUri("$name.fsm") + "#sm")
+        if (!host.createMachineFile(name, Xmi.toXmi(result.machine))) return
+        s.replaceModel(result.parent)
+        s.selection = linkedSetOf(result.stateId)
+        s.commit()
+        renderProps()
+    }
 
     fun reveal(id: String) {
         val s = session ?: return
