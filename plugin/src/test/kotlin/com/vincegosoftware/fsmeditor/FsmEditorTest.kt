@@ -142,6 +142,21 @@ class FsmEditorTest : BasePlatformTestCase() {
         }
     }
 
+    /** The PNG export: the diagram cropped to its content with a 20 px margin, at twice its size, also written to build/screenshots. */
+    fun testExportsThePngAtTwiceTheSize() {
+        val editor = openDiagram("MediaPlayer.fsm", File(examples, "MediaPlayer.fsm").readText())
+        val panel = editor.component as EditorPanel
+        val session = panel.session!!
+        session.selection = linkedSetOf(session.model.vertices.first().id)
+        val image = panel.exportPng()!!
+        val b = com.vincegosoftware.fsmeditor.core.Geometry.contentBounds(session.index, panel.canvas::labelWidth)
+        assertEquals(kotlin.math.ceil((b.w + 40) * 2).toInt(), image.width)
+        assertEquals(kotlin.math.ceil((b.h + 40) * 2).toInt(), image.height)
+        assertEquals(java.awt.Color.WHITE.rgb, image.getRGB(0, 0))
+        val out = File(System.getProperty("fsm.screenshots") ?: "build/screenshots").apply { mkdirs() }
+        javax.imageio.ImageIO.write(image, "png", File(out, "MediaPlayer-export.png"))
+    }
+
     private fun invalidateAll(c: java.awt.Component) {
         c.invalidate()
         if (c is java.awt.Container) c.components.forEach { invalidateAll(it) }

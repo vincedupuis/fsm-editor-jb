@@ -9,6 +9,7 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.InputValidatorEx
@@ -75,6 +76,22 @@ class ExportSvgAction : FsmFileAction() {
             }
         }
         FsmDocuments.saveSvg(project, file, SvgExport.export(session))
+    }
+}
+
+/** Draws the image with the open diagram, so it needs one: the selected editor's, or one open on the selected file. */
+class ExportPngAction : FsmFileAction() {
+    private fun diagramOf(e: AnActionEvent): FsmFileEditor? {
+        (e.getData(PlatformDataKeys.FILE_EDITOR) as? FsmFileEditor)?.let { return it }
+        val project = e.project ?: return null
+        val file = fileOf(e) ?: return null
+        return FileEditorManager.getInstance(project).getAllEditors(file).filterIsInstance<FsmFileEditor>().firstOrNull()
+    }
+
+    override fun isApplicable(e: AnActionEvent) = diagramOf(e) != null
+
+    override fun actionPerformed(e: AnActionEvent) {
+        diagramOf(e)?.exportPng()
     }
 }
 

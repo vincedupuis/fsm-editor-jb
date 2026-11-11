@@ -13,19 +13,23 @@ import kotlin.math.roundToInt
  * Colors of the diagram, taken from the current IDE theme and editor color
  * scheme. A new instance is made when the theme changes.
  */
-class Theme private constructor() {
-    val background: Color = EditorColorsManager.getInstance().globalScheme.defaultBackground
-    val foreground: Color = EditorColorsManager.getInstance().globalScheme.defaultForeground
-    val muted: Color = UIUtil.getContextHelpForeground()
-    val accent: Color = JBUI.CurrentTheme.Focus.focusColor()
-    val panel: Color = UIUtil.getPanelBackground()
+class Theme private constructor(
+    val background: Color,
+    val foreground: Color,
+    val muted: Color,
+    val accent: Color,
+    val panel: Color,
+    val isDark: Boolean,
+    line: Color? = null,
+    stateFill: Color? = null,
+    noteFill: Color? = null,
+) {
     val border: Color = mix(background, foreground, 0.22)
-    val line: Color = mix(background, foreground, 0.85)
-    val stateFill: Color = mix(background, foreground, 0.05)
-    val noteFill: Color = mix(stateFill, Color(0xe8, 0xc5, 0x47), 0.22)
+    val line: Color = line ?: mix(background, foreground, 0.85)
+    val stateFill: Color = stateFill ?: mix(background, foreground, 0.05)
+    val noteFill: Color = noteFill ?: mix(this.stateFill, Color(0xe8, 0xc5, 0x47), 0.22)
     val grid: Color = mix(background, foreground, 0.14)
     val widget: Color = mix(background, foreground, 0.06)
-    val isDark: Boolean = !JBColor.isBright()
     val error = Color(0xe5, 0x14, 0x00)
     val warning = Color(0xbf, 0x88, 0x03)
     val info = Color(0x1a, 0x85, 0xff)
@@ -42,7 +46,30 @@ class Theme private constructor() {
     companion object {
         private var cached: Theme? = null
 
-        val current: Theme get() = cached ?: Theme().also { cached = it }
+        val current: Theme
+            get() = cached ?: Theme(
+                background = EditorColorsManager.getInstance().globalScheme.defaultBackground,
+                foreground = EditorColorsManager.getInstance().globalScheme.defaultForeground,
+                muted = UIUtil.getContextHelpForeground(),
+                accent = JBUI.CurrentTheme.Focus.focusColor(),
+                panel = UIUtil.getPanelBackground(),
+                isDark = !JBColor.isBright(),
+            ).also { cached = it }
+
+        /** The light colors of the SVG export, whatever the IDE theme: for the PNG export. */
+        val export: Theme by lazy {
+            Theme(
+                background = Color.WHITE,
+                foreground = Color(0x1f, 0x1f, 0x1f),
+                muted = Color(0x6f, 0x6f, 0x6f),
+                accent = Color(0x00, 0x78, 0xd4),
+                panel = Color.WHITE,
+                isDark = false,
+                line = Color(0x33, 0x33, 0x33),
+                stateFill = Color(0xfd, 0xfd, 0xfd),
+                noteFill = Color(0xfb, 0xf3, 0xcf),
+            )
+        }
 
         /** Forgets the colors after a theme or color scheme change. */
         fun reset() {

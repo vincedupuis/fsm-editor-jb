@@ -89,6 +89,7 @@ interface EditorHost {
     fun redo()
     fun generateCode()
     fun exportSvg()
+    fun exportPng()
     fun openAsText()
     fun openSubmachine(href: String)
 }
@@ -422,6 +423,9 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
 
     fun exportSvg(): String? = session?.let { SvgExport.export(it) }
 
+    /** The diagram as an image at twice its size, in the SVG export's colors. */
+    fun exportPng(): java.awt.image.BufferedImage? = canvas.exportImage(2.0)
+
     // ---------------------------------------------------------------- editing commands
 
     val hasSelection: Boolean get() = session?.selection?.isNotEmpty() == true
@@ -671,6 +675,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         val right = DefaultActionGroup().apply {
             add(action("Code", AllIcons.Actions.Execute, host::generateCode, true).also { it.templatePresentation.description = "Generate code from a template" })
             add(action("SVG", AllIcons.ToolbarDecorator.Export, host::exportSvg, true).also { it.templatePresentation.description = "Export as SVG" })
+            add(action("PNG", AllIcons.ToolbarDecorator.Export, host::exportPng, true).also { it.templatePresentation.description = "Export as PNG" })
             addSeparator()
             add(action("XMI", AllIcons.FileTypes.Xml, host::openAsText, true).also { it.templatePresentation.description = "Open as XMI text" })
             addSeparator()

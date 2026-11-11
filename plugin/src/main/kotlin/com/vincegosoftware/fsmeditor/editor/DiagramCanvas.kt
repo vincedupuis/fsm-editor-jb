@@ -58,7 +58,9 @@ import java.awt.geom.RoundRectangle2D
 import java.lang.reflect.Proxy
 import javax.swing.JComponent
 import javax.swing.SwingUtilities
+import java.awt.image.BufferedImage
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
@@ -243,7 +245,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
 
     // ---------------------------------------------------------------- rendering
 
-    private val th: Theme get() = Theme.current
+    /** While true, painting draws the diagram for an image: export colors, no selection, problems or drag feedback. */
+    private var exporting = false
+
+    private val th: Theme get() = if (exporting) Theme.export else Theme.current
 
     private val fontFamily: String get() = JBFont.label().family
 
@@ -266,15 +271,50 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             labels.clear()
             g.translate(viewX, viewY)
             g.scale(zoom, zoom)
-            val ix = s.index
-            val sorted = Geo.drawingOrder(ix)
-            for (v in sorted) drawVertex(g, s, v)
-            for (v in sorted.filter { it.type == VertexType.Comment }) drawAnchors(g, s, v)
-            for (t in s.model.transitions) drawTransition(g, s, t)
+            drawDiagram(g, s)
             drawOverlay(g, s)
         } finally {
             g.dispose()
         }
+    }
+
+    private fun drawDiagram(g: Graphics2D, s: DiagramSession) {
+        val sorted = Geo.drawingOrder(s.index)
+        for (v in sorted) drawVertex(g, s, v)
+        for (v in sorted.filter { it.type == VertexType.Comment }) drawAnchors(g, s, v)
+        for (t in s.model.transitions) drawTransition(g, s, t)
+    }
+
+    /**
+     * The diagram as an image, cropped to its content with a margin like the SVG export and in its colors,
+     * at [scale] times its size (less when a side would exceed [MAX_IMAGE_SIDE] pixels); null without a diagram.
+     */
+    fun exportImage(scale: Double): BufferedImage? {
+        val s = s ?: return null
+        s.reindex()
+        val pad = 20.0
+        val b = Geo.contentBounds(s.index, ::labelWidth)
+        val w = b.w + pad * 2
+        val h = b.h + pad * 2
+        val k = min(scale, MAX_IMAGE_SIDE / max(w, h))
+        val image = BufferedImage(max(1, ceil(w * k).toInt()), max(1, ceil(h * k).toInt()), BufferedImage.TYPE_INT_RGB)
+        val g = image.createGraphics()
+        exporting = true
+        try {
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+            g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
+            g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+            g.color = th.background
+            g.fillRect(0, 0, image.width, image.height)
+            g.scale(k, k)
+            g.translate(pad - b.x, pad - b.y)
+            drawDiagram(g, s)
+        } finally {
+            exporting = false
+            g.dispose()
+        }
+        return image
     }
 
     private fun drawGrid(g: Graphics2D) {
@@ -327,6 +367,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     private enum class IssueLevel { None, Warning, Error }
 
     private fun issueOf(id: String): IssueLevel {
+        if (exporting) return IssueLevel.None
         val list = editor.issuesFor(id)
         if (list.any { it.severity == Severity.Error }) return IssueLevel.Error
         if (list.any { it.severity == Severity.Warning }) return IssueLevel.Warning
@@ -341,9 +382,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
 
     private fun drawVertex(g: Graphics2D, s: DiagramSession, v: Vertex) {
         val ix = s.index
-        val selected = v.id in s.selection
+        val selected = !exporting && v.id in s.selection
         val issue = issueOf(v.id)
-        val dropTarget = drag?.dropState == v.id
+        val dropTarget = !exporting && drag?.dropState == v.id
 
         // Outline of the element's own shape: its color, then selection, warnings and errors, win in that order.
         val own = Theme.colorOf(v.color)
@@ -446,7 +487,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                             else g.line(dashed, sepColor, rr.x, rr.y, rr.x + rr.w, rr.y)
                         }
                         if (region.name.isNotEmpty()) drawText(g, rr.x + 6, rr.y + 12, region.name, 10.0, dimText, TextAnchor.Start, italic = true)
-                        if (drag?.dropRegion == region.id) {
+                        if (!exporting && drag?.dropRegion == region.id) {
                             g.color = th.alpha(th.accent, 0.08)
                             g.fill(Rectangle2D.Double(rr.x, rr.y, rr.w, rr.h))
                         }
@@ -541,7 +582,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val ix = s.index
         if (!Geo.isDrawn(ix, t)) return
         val pts = Geo.route(ix, t) ?: return
-        val selected = t.id in s.selection
+        val selected = !exporting && t.id in s.selection
         val color = when (issueOf(t.id)) {
             IssueLevel.Error -> th.error
             IssueLevel.Warning -> th.warning
@@ -569,7 +610,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 val b = drawText(g, lp.x, Geo.labelLineY(lp, i, lines.size), line.second, 11.0, text, lp.anchor, halo = th.background) ?: continue
                 box = box?.createUnion(b) ?: b
             }
-            if (box != null) labels.add(box to t.id)
+            if (box != null && !exporting) labels.add(box to t.id)
         }
         if (selected && s.selection.size == 1) {
             for (p in waypointHandles(s, t)) {
@@ -1360,6 +1401,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     companion object {
         /** Prefix of the text a toolbox item drags onto the canvas. */
         const val TOOL_PREFIX = "fsm-editor-tool:"
+
+        /** Largest side of an exported image, in pixels. */
+        const val MAX_IMAGE_SIDE = 16384.0
 
         private val CORNERS = listOf("nw", "ne", "sw", "se")
         private val RESIZABLE = setOf(VertexType.State, VertexType.Comment, VertexType.Fork, VertexType.Join)

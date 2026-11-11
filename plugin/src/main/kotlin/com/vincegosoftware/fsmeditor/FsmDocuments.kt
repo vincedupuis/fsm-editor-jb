@@ -22,7 +22,9 @@ import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.Hrefs
 import com.vincegosoftware.fsmeditor.core.Xmi
 import com.vincegosoftware.fsmeditor.editor.FsmFileEditor
+import java.awt.image.BufferedImage
 import java.io.IOException
+import javax.imageio.ImageIO
 import javax.swing.Icon
 
 object FsmIcons {
@@ -112,6 +114,20 @@ object FsmDocuments {
             WindowManager.getInstance().getStatusBar(project)?.info = "Exported to ${target.file.name}."
         } catch (e: IOException) {
             Messages.showErrorDialog(project, e.message ?: e.toString(), "SVG Export Failed")
+        }
+    }
+
+    /** Asks where to save a PNG image of [file] and writes [image]. */
+    fun savePng(project: Project, file: VirtualFile, image: BufferedImage) {
+        val descriptor = FileSaverDescriptor("Export as PNG", "Save the diagram as a PNG image")
+        val target = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+            .save(file.parent, file.nameWithoutExtension + ".png") ?: return
+        try {
+            if (!ImageIO.write(image, "png", target.file)) throw IOException("No PNG writer is available.")
+            target.getVirtualFile(true)
+            WindowManager.getInstance().getStatusBar(project)?.info = "Exported to ${target.file.name}."
+        } catch (e: IOException) {
+            Messages.showErrorDialog(project, e.message ?: e.toString(), "PNG Export Failed")
         }
     }
 }

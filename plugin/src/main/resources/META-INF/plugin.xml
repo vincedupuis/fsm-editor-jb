@@ -13,7 +13,7 @@
           entry/exit/do behaviors, deferrable events, time triggers and protocol state machines.</li>
       <li>A diagram with a toolbox and a properties panel; the XMI text stays one click away in the Text tab.</li>
       <li>Live validation of the UML well-formedness rules, on the diagram and in the Problems tool window.</li>
-      <li>SVG export.</li>
+      <li>SVG and PNG export.</li>
     </ul>
     <p><code>*.fsm</code> files are standard XMI 2.5.1: the UML model plus its UML DI layout.
     They are the same files as in FSM Editor for VS Code and for Visual Studio, and diagram elements
@@ -47,6 +47,8 @@
                 text="Generate Code..." description="Generate source code from the state machine with a Handlebars or Jinja template"/>
         <action id="FsmEditor.ExportSvg" class="com.vincegosoftware.fsmeditor.ExportSvgAction"
                 text="Export as SVG..." description="Save the state machine diagram as an SVG image"/>
+        <action id="FsmEditor.ExportPng" class="com.vincegosoftware.fsmeditor.ExportPngAction"
+                text="Export as PNG..." description="Save the open state machine diagram as a PNG image"/>
         <action id="FsmEditor.OpenAsText" class="com.vincegosoftware.fsmeditor.OpenAsTextAction"
                 text="Open as XMI Text" description="Show the XMI text of the state machine"/>
         <action id="FsmEditor.OpenInDiagram" class="com.vincegosoftware.fsmeditor.OpenInDiagramAction"
@@ -56,6 +58,7 @@
             <separator/>
             <reference ref="FsmEditor.GenerateCode"/>
             <reference ref="FsmEditor.ExportSvg"/>
+            <reference ref="FsmEditor.ExportPng"/>
             <reference ref="FsmEditor.OpenAsText"/>
             <reference ref="FsmEditor.OpenInDiagram"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
@@ -67,6 +70,7 @@
                     text="New State Machine..." description="Create a UML state machine (.fsm)"/>
             <reference ref="FsmEditor.GenerateCode"/>
             <reference ref="FsmEditor.ExportSvg"/>
+            <reference ref="FsmEditor.ExportPng"/>
             <reference ref="FsmEditor.OpenAsText"/>
             <reference ref="FsmEditor.OpenInDiagram"/>
             <add-to-group group-id="ToolsMenu" anchor="last"/>

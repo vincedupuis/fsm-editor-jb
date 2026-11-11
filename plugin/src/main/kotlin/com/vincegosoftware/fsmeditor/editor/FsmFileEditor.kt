@@ -165,6 +165,11 @@ class FsmFileEditor(private val project: Project, private val file: VirtualFile)
         FsmDocuments.saveSvg(project, file, svg)
     }
 
+    override fun exportPng() {
+        val image = panel.exportPng() ?: return
+        FsmDocuments.savePng(project, file, image)
+    }
+
     override fun openAsText() = FsmDocuments.openAsText(project, file)
 
     override fun openSubmachine(href: String) {

@@ -2,7 +2,7 @@
 
 [![JetBrains Marketplace version](https://img.shields.io/jetbrains/plugin/v/34709)](https://plugins.jetbrains.com/plugin/34709-fsm-editor--uml-state-machines)
 
-A visual editor and code generator for UML 2.5.1 state machines in IntelliJ IDEA and the other JetBrains IDEs (2024.3 and later). Draw a machine in any `*.fsm` file, with a toolbox, a properties panel, live validation and SVG export, then generate its source code from templates, in the IDE or with the bundled `fsm` command-line generator. Files are standard XMI 2.5.1: the UML model plus its diagram layout in UML DI, in the same file.
+A visual editor and code generator for UML 2.5.1 state machines in IntelliJ IDEA and the other JetBrains IDEs (2024.3 and later). Draw a machine in any `*.fsm` file, with a toolbox, a properties panel, live validation and SVG and PNG export, then generate its source code from templates, in the IDE or with the bundled `fsm` command-line generator. Files are standard XMI 2.5.1: the UML model plus its diagram layout in UML DI, in the same file.
 
 This is the JetBrains edition of [FSM Editor for VS Code](https://github.com/vincedupuis/fsm-editor-vscode) and [FSM Editor for Visual Studio](https://github.com/vincedupuis/fsm-editor-vs). The three editors use the same file format, rules and code generator, so a team can edit the same `.fsm` files in any of them, and copy and paste diagram elements between them.
 
@@ -45,7 +45,7 @@ A `.fsm` file opens with two tabs at the bottom of the editor: **Diagram** and *
 - **Shortcuts**: S state, X final, I initial, H history, C choice, J junction, N comment, T transition, R region, V/Esc select. Shift+click a tool to keep it active.
 - **Submachines**: Alt+double-click a submachine state, or use the button in its properties, to open the referenced machine.
 
-Actions (**Tools › FSM Editor**, and the context menus of `.fsm` files in the Project view and of the editor tab): *New State Machine...*, *Generate Code...*, *Export as SVG...*, *Open as XMI Text*, *Open in FSM Editor*. *File › New › State Machine* creates a machine in the selected folder.
+Actions (**Tools › FSM Editor**, and the context menus of `.fsm` files in the Project view and of the editor tab): *New State Machine...*, *Generate Code...*, *Export as SVG...*, *Export as PNG...* (once the diagram is open), *Open as XMI Text*, *Open in FSM Editor*. *File › New › State Machine* creates a machine in the selected folder.
 
 ## Development
 
@@ -67,7 +67,7 @@ Install the ZIP with Settings › Plugins › ⚙ › *Install Plugin from Disk.
 
 - `core/` (Kotlin, no IntelliJ dependency): the model (`Model.kt`), the text grammar (`Expressions.kt`), the XMI/UML DI file format (`Xmi.kt`, `XmlTree.kt`), the validator (`Validation.kt`), diagram geometry (`Geometry.kt`, `Labels.kt`), every editing operation of the diagram (`DiagramSession.kt`, `Tools.kt`), SVG export, the clipboard format and submachine resolution (`Workspace.kt`)
 - `plugin/`: the IntelliJ Platform plugin
-  - `FsmDocuments.kt`: the file type, opening files in the diagram or as text, SVG saving
+  - `FsmDocuments.kt`: the file type, opening files in the diagram or as text, SVG and PNG saving
   - `editor/FsmEditorProvider.kt`, `editor/FsmFileEditor.kt`: the Diagram tab; syncs the document and the diagram
   - `editor/EditorPanel.kt`, `editor/DiagramCanvas.kt`, `editor/PropertiesPanel.kt`: the Swing diagram editor
   - `services/`: the project's machines, validation in the Text tab, the XMI namespaces
