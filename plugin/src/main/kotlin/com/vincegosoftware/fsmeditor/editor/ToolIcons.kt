@@ -9,6 +9,7 @@ import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.Shape
+import java.awt.geom.Arc2D
 import java.awt.geom.Ellipse2D
 import java.awt.geom.Line2D
 import java.awt.geom.Path2D
@@ -16,7 +17,7 @@ import java.awt.geom.Rectangle2D
 import java.awt.geom.RoundRectangle2D
 import javax.swing.Icon
 
-/** Line icons of the toolbox, drawn on a 24×24 grid in the current text color. */
+/** Line icons of the toolbox and toolbar (those of the VS Code edition), drawn on a 24×24 grid in the current text color. */
 object ToolIcons {
     private enum class Paint { Stroke, Fill, Hole, Faint, Dashed, Heavy }
 
@@ -51,9 +52,25 @@ object ToolIcons {
         "transition" to listOf(s("M3,18 L20,5"), s("M13,5 h7 v7")),
         "region" to listOf(rect(2.0, 3.0, 20.0, 18.0, 4.0), line(2.0, 12.0, 22.0, 12.0, Paint.Dashed), s("M12,15 v4 M10,17 h4")),
         "comment" to listOf(s("M4,3 h11 l5,5 v13 H4 z"), s("M15,3 v5 h5"), s("M7,12 h9 M7,16 h7")),
+        "undo" to listOf(s("M9,14 L4,9 l5,-5"), s("M4,9 H15"), Part(Paint.Stroke, Arc2D.Double(10.0, 9.0, 10.0, 10.0, 90.0, -180.0, Arc2D.OPEN)), s("M15,19 H12")),
+        "redo" to listOf(s("M15,14 l5,-5 l-5,-5"), s("M20,9 H9"), Part(Paint.Stroke, Arc2D.Double(4.0, 9.0, 10.0, 10.0, 90.0, 180.0, Arc2D.OPEN)), s("M9,19 H12")),
+        "zoomIn" to listOf(circle(11.0, 11.0, 7.0), s("M21,21 l-5,-5 M8,11 h6 M11,8 v6")),
+        "zoomOut" to listOf(circle(11.0, 11.0, 7.0), s("M21,21 l-5,-5 M8,11 h6")),
+        "fit" to listOf(s("M4,9 V4 h5 M20,9 V4 h-5 M4,15 v5 h5 M20,15 v5 h-5")),
+        "export" to listOf(s("M12,3 v12 M7,8 l5,-5 l5,5"), s("M5,14 v6 h14 v-6")),
+        "xmi" to listOf(s("M8,4 C6,4 6,6 6,8 C6,10 4,12 4,12 C4,12 6,12 6,16 C6,20 6,20 8,20 M16,4 C18,4 18,6 18,8 C18,10 20,12 20,12 C20,12 18,12 18,16 C18,20 18,20 16,20")),
+        "code" to listOf(s("M8,7 l-5,5 l5,5 M16,7 l5,5 l-5,5 M14,4 l-4,16")),
+        "trace" to listOf(s("M3,12 h4 l3,-7 l4,14 l3,-7 h4")),
+        // The Trace Player's First, Previous and Next record (after VS Code's Restart, Step Back and Step Over).
+        "first" to listOf(Part(Paint.Stroke, Arc2D.Double(4.0, 4.0, 16.0, 16.0, 135.0, -315.0, Arc2D.OPEN)), s("M6,2 v4.5 h4.5")),
+        "stepBack" to listOf(Part(Paint.Stroke, Arc2D.Double(5.0, 6.0, 14.0, 14.0, 0.0, 180.0, Arc2D.OPEN)), s("M2,10 l3,3 l3,-3"), circle(12.0, 19.0, 2.0, Paint.Fill)),
+        "stepOver" to listOf(Part(Paint.Stroke, Arc2D.Double(5.0, 6.0, 14.0, 14.0, 0.0, 180.0, Arc2D.OPEN)), s("M16,10 l3,3 l3,-3"), circle(12.0, 19.0, 2.0, Paint.Fill)),
+        "trash" to listOf(s("M4,7 h16 M9,7 V4 h6 v3 M6,7 l1,13 h10 l1,-13")),
+        "toolbox" to listOf(rect(4.0, 4.0, 7.0, 7.0, 1.5), rect(13.0, 4.0, 7.0, 7.0, 1.5), rect(4.0, 13.0, 7.0, 7.0, 1.5), circle(16.5, 16.5, 3.5)),
+        "properties" to listOf(s("M4,6 h16 M4,12 h16 M4,18 h10"), circle(8.0, 6.0, 1.6, Paint.Fill), circle(15.0, 12.0, 1.6, Paint.Fill)),
     )
 
-    /** The icon of tool [name], or null when unknown. */
+    /** The icon [name] (a tool id or a toolbar action), or null when unknown. */
     fun get(name: String, size: Int = 18): Icon? {
         val list = parts[name] ?: return null
         return ToolIcon(list, size)
@@ -118,10 +135,10 @@ object ToolIcons {
         }
     }
 
-    /** Parses the SVG path commands the icons use: M, L, H, V, Z and their relative forms. */
+    /** Parses the SVG path commands the icons use: M, L, H, V, C, Z and their relative forms. */
     private fun parsePath(d: String): Shape {
         val path = Path2D.Double()
-        val tokens = Regex("[MLHVZmlhvz]|-?[0-9]*\\.?[0-9]+").findAll(d).map { it.value }.toList()
+        val tokens = Regex("[MLHVCZmlhvcz]|-?[0-9]*\\.?[0-9]+").findAll(d).map { it.value }.toList()
         var i = 0
         var x = 0.0
         var y = 0.0
@@ -168,6 +185,13 @@ object ToolIcons {
                     val n = num()
                     y = if (cmd == 'v') y + n else n
                     path.lineTo(x, y)
+                }
+                'C', 'c' -> {
+                    val (ox, oy) = if (cmd == 'c') x to y else 0.0 to 0.0
+                    val c = DoubleArray(6) { num() }
+                    path.curveTo(ox + c[0], oy + c[1], ox + c[2], oy + c[3], ox + c[4], oy + c[5])
+                    x = ox + c[4]
+                    y = oy + c[5]
                 }
                 else -> i++
             }

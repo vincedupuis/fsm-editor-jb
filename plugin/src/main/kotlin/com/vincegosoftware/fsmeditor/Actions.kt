@@ -46,6 +46,19 @@ abstract class FsmFileAction : DumbAwareAction() {
     protected open fun isApplicable(e: AnActionEvent) = true
 }
 
+/** "Open Trace…": opens log files in the Trace Player. */
+class OpenTraceAction : com.intellij.openapi.project.DumbAwareAction() {
+    override fun getActionUpdateThread() = com.intellij.openapi.actionSystem.ActionUpdateThread.BGT
+
+    override fun update(e: AnActionEvent) {
+        e.presentation.isEnabledAndVisible = e.project != null
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        com.vincegosoftware.fsmeditor.trace.TracePlayerService.getInstance(e.project ?: return).open()
+    }
+}
+
 class GenerateCodeAction : FsmFileAction() {
     override fun actionPerformed(e: AnActionEvent) {
         CodeGeneration.generate(e.project ?: return, fileOf(e))

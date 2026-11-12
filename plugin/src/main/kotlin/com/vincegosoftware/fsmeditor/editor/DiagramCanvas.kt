@@ -9,6 +9,7 @@ import com.intellij.openapi.actionSystem.PlatformDataKeys
 import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBFont
 import com.vincegosoftware.fsmeditor.core.DiagramSession
 import com.vincegosoftware.fsmeditor.core.ElementColors
@@ -23,6 +24,7 @@ import com.vincegosoftware.fsmeditor.core.Severity
 import com.vincegosoftware.fsmeditor.core.SvgExport
 import com.vincegosoftware.fsmeditor.core.TextAnchor
 import com.vincegosoftware.fsmeditor.core.Tools
+import com.vincegosoftware.fsmeditor.core.TraceView
 import com.vincegosoftware.fsmeditor.core.Transition
 import com.vincegosoftware.fsmeditor.core.Vertex
 import com.vincegosoftware.fsmeditor.core.VertexType
@@ -254,6 +256,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
 
     private val th: Theme get() = if (exporting) Theme.export else Theme.current
 
+    /** The Trace Player's highlights, not in exports. */
+    private val trace: TraceView? get() = if (exporting) null else editor.trace
+
     private val fontFamily: String get() = JBFont.label().family
 
     private fun font(size: Double, bold: Boolean = false, italic: Boolean = false): Font =
@@ -405,6 +410,18 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             stroke = th.error
             shapeWidth = 2.0
             fill = th.error
+        }
+        // The Trace Player: active state, or pseudostate on the way of the taken transitions.
+        val trace = trace
+        val activeIn = trace?.active?.get(v.id)
+        if (trace != null) {
+            val takenIn = trace.taken[v.id]
+            if (activeIn != null || takenIn != null) {
+                stroke = traceColor((activeIn ?: takenIn)!![0], activeIn != null)
+                fill = stroke
+                shapeWidth = if (activeIn != null) 3.0 else 2.4
+            }
+            if (v.id in trace.current) drawGlow(g, v)
         }
         val shapePen = if (dropTarget) th.stroke(2.5, floatArrayOf(6f, 3f)) else th.stroke(shapeWidth)
         val shapeColor = if (dropTarget) th.accent else stroke
@@ -576,6 +593,31 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             val below = if (v.type == VertexType.Fork || v.type == VertexType.Join) y + h + 13 else y + h + 12
             drawText(g, cx, below, caption, 11.0, textColor)
         }
+        // A dot per instance in the color of each, above the top right corner of a state active in several instances.
+        if (activeIn != null && activeIn.size > 1) {
+            for ((i, c) in activeIn.withIndex()) {
+                val dot = Ellipse2D.Double(x + w - 6 - (activeIn.size - 1 - i) * 11 - 4, y - 7 - 4, 8.0, 8.0)
+                g.color = traceColor(c)
+                g.fill(dot)
+                g.color = th.background
+                g.stroke = th.stroke(1.0)
+                g.draw(dot)
+            }
+        }
+    }
+
+    /** The Trace Player's current element: a glow around its shape. */
+    private fun drawGlow(g: Graphics2D, v: Vertex) {
+        g.stroke = th.stroke(6.0)
+        g.color = th.alpha(TRACE_CURRENT, 0.45)
+        val (x, y, w, h) = listOf(v.x - 1, v.y - 1, v.w + 2, v.h + 2)
+        g.draw(
+            when (v.type) {
+                VertexType.State, VertexType.Comment -> RoundRectangle2D.Double(x, y, w, h, 22.0, 22.0)
+                VertexType.Fork, VertexType.Join, VertexType.Terminate -> Rectangle2D.Double(x, y, w, h)
+                else -> Ellipse2D.Double(x, y, w, h)
+            },
+        )
     }
 
     /** The bend points to drag: the corners of a state's self-transition loop, or the transition's bend points. */
@@ -587,16 +629,29 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         if (!Geo.isDrawn(ix, t)) return
         val pts = Geo.route(ix, t) ?: return
         val selected = !exporting && t.id in s.selection
-        val color = when (issueOf(t.id)) {
+        var color = when (issueOf(t.id)) {
             IssueLevel.Error -> th.error
             IssueLevel.Warning -> th.warning
             IssueLevel.None -> if (selected) th.accent else Theme.colorOf(t.color) ?: th.line
         }
-        g.stroke = th.stroke(if (selected) 2.0 else 1.3)
-        g.color = color
+        var width = if (selected) 2.0 else 1.3
+        // The Trace Player: a transition taken by the current step.
+        val trace = trace
+        val takenColor = trace?.taken?.get(t.id)?.let { traceColor(it[0], false) }
+        if (takenColor != null) {
+            color = takenColor
+            width = 2.6
+        }
         val line = Path2D.Double()
         line.moveTo(pts[0].x, pts[0].y)
         for (p in pts.drop(1)) line.lineTo(p.x, p.y)
+        if (trace != null && t.id in trace.current) {
+            g.stroke = th.stroke(7.0)
+            g.color = th.alpha(TRACE_CURRENT, 0.45)
+            g.draw(line)
+        }
+        g.stroke = th.stroke(width)
+        g.color = color
         g.draw(line)
         val b = pts[pts.size - 1]
         val (p1, p2) = SvgExport.arrowHead(pts[pts.size - 2], b)
@@ -610,7 +665,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             val lp = Geo.labelPos(t, pts)
             var box: Rectangle2D? = null
             for ((i, line) in lines.withIndex()) {
-                val text = Theme.colorOf(ElementColors.item(t.color, t.itemColors, line.first)) ?: if (selected) th.accent else th.foreground
+                val text = Theme.colorOf(ElementColors.item(t.color, t.itemColors, line.first)) ?: takenColor ?: if (selected) th.accent else th.foreground
                 val b = drawText(g, lp.x, Geo.labelLineY(lp, i, lines.size), line.second, 11.0, text, lp.anchor, halo = th.background) ?: continue
                 box = box?.createUnion(b) ?: b
             }
@@ -1459,5 +1514,20 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         private const val EXTRACT = "Extract to Submachine…"
         private val CORNERS = listOf("nw", "ne", "sw", "se")
         private val RESIZABLE = setOf(VertexType.State, VertexType.Comment, VertexType.Fork, VertexType.Join)
+
+        /** VS Code's chart colors (green, blue, purple, orange) in light and dark themes, then two of the editor's own. */
+        private val TRACE_PALETTE = listOf(
+            JBColor(0x388a34, 0x89d185), JBColor(0x1a85ff, 0x3794ff), JBColor(0x652d90, 0xb180d7),
+            JBColor(0xd18616, 0xd18616), JBColor(0x00a3a3, 0x00a3a3), JBColor(0xd16da8, 0xd16da8),
+        )
+        /** VS Code's yellow chart color. */
+        private val TRACE_CURRENT = JBColor(0xbf8803, 0xcca700)
+
+        /**
+         * Trace Player colors, as the VS Code edition's chart colors of the theme: an instance's ([instance] >= 0, when
+         * its machine has several), else green for active states and orange for taken transitions.
+         */
+        fun traceColor(instance: Int, active: Boolean = true): Color =
+            if (instance >= 0) TRACE_PALETTE[instance % TraceView.COLORS] else if (active) TRACE_PALETTE[0] else TRACE_PALETTE[3]
     }
 }

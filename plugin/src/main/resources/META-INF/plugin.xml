@@ -34,6 +34,8 @@
         <applicationConfigurable parentId="tools" id="fsmEditor" displayName="FSM Editor"
                                  instance="com.vincegosoftware.fsmeditor.settings.FsmConfigurable"/>
         <notificationGroup id="FSM Editor" displayType="BALLOON"/>
+        <toolWindow id="Trace Player" anchor="bottom" icon="/icons/trace.svg"
+                    factoryClass="com.vincegosoftware.fsmeditor.trace.TracePlayerToolWindowFactory"/>
         <toolWindow id="FSM Code Generation" anchor="bottom" icon="/icons/fsm.svg" canCloseContents="false"
                     factoryClass="com.vincegosoftware.fsmeditor.codegen.CodeGenToolWindowFactory"/>
     </extensions>
@@ -54,6 +56,9 @@
         <action id="FsmEditor.OpenInDiagram" class="com.vincegosoftware.fsmeditor.OpenInDiagramAction"
                 text="Open in FSM Editor" description="Show the state machine diagram"/>
 
+        <action id="FsmEditor.OpenTrace" class="com.vincegosoftware.fsmeditor.OpenTraceAction"
+                text="Open Trace..." description="Replay logs of your state machines on their diagrams in the Trace Player"/>
+
         <group id="FsmEditor.FileActions">
             <separator/>
             <reference ref="FsmEditor.GenerateCode"/>
@@ -73,6 +78,8 @@
             <reference ref="FsmEditor.ExportPng"/>
             <reference ref="FsmEditor.OpenAsText"/>
             <reference ref="FsmEditor.OpenInDiagram"/>
+            <separator/>
+            <reference ref="FsmEditor.OpenTrace"/>
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </group>
     </actions>

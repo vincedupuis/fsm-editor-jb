@@ -1,6 +1,5 @@
 package com.vincegosoftware.fsmeditor.editor
 
-import com.intellij.icons.AllIcons
 import com.intellij.ide.CopyProvider
 import com.intellij.ide.CutProvider
 import com.intellij.ide.DeleteProvider
@@ -46,6 +45,7 @@ import com.vincegosoftware.fsmeditor.core.SubmachineInfo
 import com.vincegosoftware.fsmeditor.core.SvgExport
 import com.vincegosoftware.fsmeditor.core.TextAnchor
 import com.vincegosoftware.fsmeditor.core.Tools
+import com.vincegosoftware.fsmeditor.core.TraceView
 import com.vincegosoftware.fsmeditor.core.VertexType
 import com.vincegosoftware.fsmeditor.core.Xmi
 import com.vincegosoftware.fsmeditor.settings.FsmSettings
@@ -91,6 +91,8 @@ interface EditorHost {
     fun undo()
     fun redo()
     fun generateCode()
+    /** Shows the Trace Player tool window. */
+    fun showTracePlayer()
     fun exportSvg()
     fun exportPng()
     fun openAsText()
@@ -138,6 +140,17 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     var session: DiagramSession? = null
         private set
 
+    /** The Trace Player's highlights of this machine, or null without a trace. */
+    var trace: TraceView? = null
+        private set
+
+    fun setTrace(view: TraceView?) {
+        if (view == null && trace == null) return
+        trace = view
+        canvas.repaint()
+        renderStatus()
+    }
+
     /** Copy, cut, paste and delete for the IDE's edit actions. */
     val clipboardHandler = ClipboardHandler()
 
@@ -158,8 +171,8 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             border = JBUI.Borders.empty()
             horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
-        toolboxPane = ToolPane("Toolbox", AllIcons.Toolwindows.ToolWindowPalette, toolboxScroll, ::onPaneChanged)
-        propsPane = ToolPane("Properties", AllIcons.Actions.Properties, propsScroll, ::onPaneChanged)
+        toolboxPane = ToolPane("Toolbox", icon("toolbox"), toolboxScroll, ::onPaneChanged)
+        propsPane = ToolPane("Properties", icon("properties"), propsScroll, ::onPaneChanged)
         add(toolbar, BorderLayout.NORTH)
         add(status, BorderLayout.SOUTH)
         add(westDock, BorderLayout.WEST)
@@ -669,6 +682,9 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
 
     // ---------------------------------------------------------------- chrome
 
+    /** A toolbar icon, drawn like the VS Code edition's. */
+    private fun icon(name: String): javax.swing.Icon = ToolIcons.get(name, 16)!!
+
     private fun action(text: String, icon: javax.swing.Icon, run: () -> Unit, showText: Boolean = false): AnAction =
         object : DumbAwareAction(text, null, icon) {
             override fun actionPerformed(e: AnActionEvent) = run()
@@ -689,22 +705,23 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     private fun buildToolbar() {
         val mod = if (SystemInfo.isMac) "⌘" else "Ctrl+"
         val left = DefaultActionGroup().apply {
-            add(action("Undo (${mod}Z)", AllIcons.Actions.Undo, host::undo))
-            add(action("Redo", AllIcons.Actions.Redo, host::redo))
+            add(action("Undo (${mod}Z)", icon("undo"), host::undo))
+            add(action("Redo", icon("redo"), host::redo))
             addSeparator()
-            add(action("Zoom Out (${mod}-)", AllIcons.General.ZoomOut, { canvas.zoomCenter(1 / 1.2) }))
+            add(action("Zoom Out (${mod}-)", icon("zoomOut"), { canvas.zoomCenter(1 / 1.2) }))
             add(ZoomLabelAction())
-            add(action("Zoom In (${mod}=)", AllIcons.General.ZoomIn, { canvas.zoomCenter(1.2) }))
-            add(action("Fit Diagram (F)", AllIcons.General.FitContent, canvas::fit))
+            add(action("Zoom In (${mod}=)", icon("zoomIn"), { canvas.zoomCenter(1.2) }))
+            add(action("Fit Diagram (F)", icon("fit"), canvas::fit))
             addSeparator()
-            add(action("Delete Selection (Del)", AllIcons.Actions.GC, ::deleteSelection))
+            add(action("Delete Selection (Del)", icon("trash"), ::deleteSelection))
         }
         val right = DefaultActionGroup().apply {
-            add(action("Code", AllIcons.Actions.Execute, host::generateCode, true).also { it.templatePresentation.description = "Generate code from a template" })
-            add(action("SVG", AllIcons.ToolbarDecorator.Export, host::exportSvg, true).also { it.templatePresentation.description = "Export as SVG" })
-            add(action("PNG", AllIcons.ToolbarDecorator.Export, host::exportPng, true).also { it.templatePresentation.description = "Export as PNG" })
+            add(action("Trace", icon("trace"), host::showTracePlayer, true).also { it.templatePresentation.description = "Show the Trace Player: replay a log on the diagrams" })
+            add(action("Code", icon("code"), host::generateCode, true).also { it.templatePresentation.description = "Generate code from a template" })
+            add(action("SVG", icon("export"), host::exportSvg, true).also { it.templatePresentation.description = "Export as SVG" })
+            add(action("PNG", icon("export"), host::exportPng, true).also { it.templatePresentation.description = "Export as PNG" })
             addSeparator()
-            add(action("XMI", AllIcons.FileTypes.Xml, host::openAsText, true).also { it.templatePresentation.description = "Open as XMI text" })
+            add(action("XMI", icon("xmi"), host::openAsText, true).also { it.templatePresentation.description = "Open as XMI text" })
             addSeparator()
             add(paneToggle(toolboxPane))
             add(paneToggle(propsPane))
@@ -873,7 +890,24 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         status.removeAll()
         status.border = JBUI.Borders.compound(JBUI.Borders.customLineTop(JBColor.border()), JBUI.Borders.empty(2, 10))
         status.add(west, BorderLayout.WEST)
-        status.add(right, BorderLayout.EAST)
+        val t = trace
+        if (t != null) {
+            // The Trace Player: the event of the current step, and a color key when the machine has several instances.
+            val traceLabel = com.intellij.ui.SimpleColoredComponent().apply {
+                append(t.statusText, SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, DiagramCanvas.traceColor(-1)))
+                for (i in t.instances.filter { it.color >= 0 }) append("   ● ${i.label}", SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, DiagramCanvas.traceColor(i.color)))
+                toolTipText = "Trace Player"
+                isOpaque = false
+                ipad = JBUI.insetsRight(16)
+            }
+            status.add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+                isOpaque = false
+                add(traceLabel)
+                add(right)
+            }, BorderLayout.EAST)
+        } else {
+            status.add(right, BorderLayout.EAST)
+        }
         status.revalidate()
         status.repaint()
     }

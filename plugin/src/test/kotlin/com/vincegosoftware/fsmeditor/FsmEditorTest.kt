@@ -186,6 +186,72 @@ class FsmEditorTest : BasePlatformTestCase() {
         javax.imageio.ImageIO.write(image, "png", File(out, "MediaPlayer-group.png"))
     }
 
+    /**
+     * The Trace Player replays examples/demo.log on the open diagrams: Payment.fsm shows its two instances (alone and
+     * inside Order) in their colors. Paints Order and Payment at the second checkout, and the tool window, into
+     * build/screenshots/trace-*.png.
+     */
+    fun testTracePlayerReplaysTheDemoLogOnTheDiagrams() {
+        val payment = openDiagram("Payment.fsm", File(examples, "Payment.fsm").readText())
+        val order = openDiagram("Order.fsm", File(examples, "Order.fsm").readText())
+        myFixture.addFileToProject("MediaPlayer.fsm", File(examples, "MediaPlayer.fsm").readText())
+        val log = File.createTempFile("demo", ".log").apply {
+            writeText(File(examples, "demo.log").readText())
+            deleteOnExit()
+        }
+        val player = com.vincegosoftware.fsmeditor.trace.TracePlayerService.getInstance(project)
+        // The editors aren't in FileEditorManager here: hand them their highlights as the service does.
+        fun push() {
+            for (e in listOf(payment, order)) e.showTrace(player.viewFor(e.file.path))
+        }
+        player.open(listOf(log.path))
+        val s = player.session
+        // The machines are read in the background.
+        waitFor { s.machines.isNotEmpty() && s.problems.isEmpty() }
+        assertEquals(153, s.entries.size)
+        assertEquals(emptyList<String>(), s.problems)
+        push()
+        val paymentPanel = payment.component as EditorPanel
+        assertEquals(listOf("Payment", "Order.Payment"), paymentPanel.trace!!.instances.map { it.label })
+
+        val at = s.entries.withIndex().filter { (_, e) -> e.record.machine == "Order.Payment" && e.record.id == "p_auth" && e.record.kind == com.vincegosoftware.fsmeditor.core.TraceKind.Enter }[1].index
+        player.seek(at)
+        push()
+        val orderPanel = order.component as EditorPanel
+        assertEquals(listOf("o_pay"), orderPanel.trace!!.instances.single().active)
+        assertEquals("▶ Trace · event checkout", orderPanel.trace!!.statusText)
+
+        val out = File(System.getProperty("fsm.screenshots") ?: "build/screenshots").apply { mkdirs() }
+        for ((name, panel) in listOf("trace-Order" to orderPanel, "trace-Payment" to paymentPanel)) {
+            panel.renderStatus()
+            panel.setSize(1400, 900)
+            layoutAll(panel)
+            invalidateAll(panel)
+            layoutAll(panel)
+            panel.canvas.fit()
+            val image = java.awt.image.BufferedImage(1400, 900, java.awt.image.BufferedImage.TYPE_INT_RGB)
+            val g = image.createGraphics()
+            panel.paint(g)
+            g.dispose()
+            javax.imageio.ImageIO.write(image, "png", File(out, "$name.png"))
+        }
+        val window = com.vincegosoftware.fsmeditor.trace.TracePlayerPanel(player)
+        Disposer.register(testRootDisposable, window)
+        window.setSize(1200, 360)
+        layoutAll(window)
+        invalidateAll(window)
+        layoutAll(window)
+        layoutAll(window)
+        val image = java.awt.image.BufferedImage(1200, 360, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val g = image.createGraphics()
+        window.paint(g)
+        g.dispose()
+        javax.imageio.ImageIO.write(image, "png", File(out, "trace-window.png"))
+        player.close(s.traces.single())
+        push()
+        assertNull(orderPanel.trace)
+    }
+
     private fun invalidateAll(c: java.awt.Component) {
         c.invalidate()
         if (c is java.awt.Container) c.components.forEach { invalidateAll(it) }

@@ -34,11 +34,13 @@ import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.Issue
 import com.vincegosoftware.fsmeditor.core.MachineInfo
 import com.vincegosoftware.fsmeditor.core.SubmachineInfo
+import com.vincegosoftware.fsmeditor.core.TraceView
 import com.vincegosoftware.fsmeditor.core.Validation
 import com.vincegosoftware.fsmeditor.core.XmiException
 import com.vincegosoftware.fsmeditor.core.XmlParseException
 import com.vincegosoftware.fsmeditor.core.Xmi
 import com.vincegosoftware.fsmeditor.services.FsmWorkspace
+import com.vincegosoftware.fsmeditor.trace.TracePlayerService
 import java.beans.PropertyChangeListener
 import java.io.IOException
 import javax.swing.JComponent
@@ -73,6 +75,14 @@ class FsmFileEditor(private val project: Project, private val file: VirtualFile)
         bus.subscribe(LafManagerListener.TOPIC, LafManagerListener { panel.themeChanged() })
         bus.subscribe(EditorColorsManager.TOPIC, EditorColorsListener { panel.themeChanged() })
         scheduleSync()
+        project.getServiceIfCreated(TracePlayerService::class.java)?.let { panel.setTrace(it.viewFor(file.path)) }
+    }
+
+    /** The Trace Player's highlights of this machine, or null. */
+    fun showTrace(view: TraceView?) = panel.setTrace(view)
+
+    override fun showTracePlayer() {
+        TracePlayerService.getInstance(project).show()
     }
 
     private fun scheduleSync() {
