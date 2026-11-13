@@ -252,6 +252,80 @@ class FsmEditorTest : BasePlatformTestCase() {
         assertNull(orderPanel.trace)
     }
 
+    /**
+     * As in the VS Code edition: an armed tool takes every click, a quick second click included, and stays armed when
+     * it can't place its element.
+     */
+    fun testArmedToolsTakeEveryClick() {
+        val editor = openDiagram("Machine.fsm", Xmi.toXmi(FsmModel.createDefault("Machine")))
+        val panel = editor.component as EditorPanel
+        val session = panel.session!!
+        val canvas = panel.canvas
+        // Headless, the canvas isn't showing: hand the presses to its mouse listeners.
+        fun press(x: Int, y: Int, clicks: Int) {
+            val e = java.awt.event.MouseEvent(
+                canvas, java.awt.event.MouseEvent.MOUSE_PRESSED, System.currentTimeMillis(), java.awt.event.InputEvent.BUTTON1_DOWN_MASK,
+                x, y, clicks, false, java.awt.event.MouseEvent.BUTTON1,
+            )
+            canvas.mouseListeners.forEach { it.mousePressed(e) }
+            val r = java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_RELEASED, System.currentTimeMillis(), 0, x, y, clicks, false, java.awt.event.MouseEvent.BUTTON1)
+            canvas.mouseListeners.forEach { it.mouseReleased(r) }
+        }
+        val states = { session.model.vertices.count { it.type == com.vincegosoftware.fsmeditor.core.VertexType.State } }
+        val before = states()
+        canvas.setTool("state", true)
+        press(500, 400, 1)
+        press(700, 400, 2)
+        assertEquals(before + 2, states())
+        assertEquals("state", canvas.tool)
+
+        // A connection point reference needs a submachine state: refused on empty canvas, the tool stays armed.
+        canvas.setTool("connectionPointRef")
+        press(900, 600, 1)
+        assertEquals("connectionPointRef", canvas.tool)
+    }
+
+    /**
+     * Double-clicks as in the VS Code edition: two plain presses close in time and place, whatever the click count; a
+     * press with a tool armed resets the tracking, so a click right after placing an element is a plain press.
+     */
+    fun testDoubleClicksFollowTheReference() {
+        val editor = openDiagram("Machine.fsm", Xmi.toXmi(FsmModel.createDefault("Machine")))
+        val panel = editor.component as EditorPanel
+        val session = panel.session!!
+        val canvas = panel.canvas
+        fun send(id: Int, x: Int, y: Int, clicks: Int) {
+            val e = java.awt.event.MouseEvent(
+                canvas, id, System.currentTimeMillis(), if (id == java.awt.event.MouseEvent.MOUSE_PRESSED) java.awt.event.InputEvent.BUTTON1_DOWN_MASK else 0,
+                x, y, clicks, false, java.awt.event.MouseEvent.BUTTON1,
+            )
+            canvas.mouseListeners.forEach { if (id == java.awt.event.MouseEvent.MOUSE_PRESSED) it.mousePressed(e) else it.mouseReleased(e) }
+        }
+        fun click(x: Int, y: Int, clicks: Int) {
+            send(java.awt.event.MouseEvent.MOUSE_PRESSED, x, y, clicks)
+            send(java.awt.event.MouseEvent.MOUSE_RELEASED, x, y, clicks)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        }
+        fun inlineEditing() = com.intellij.util.ui.UIUtil.findComponentsOfType(panel, javax.swing.text.JTextComponent::class.java)
+            .any { it.parent is javax.swing.JLayeredPane }
+        val states = { session.model.vertices.count { it.type == com.vincegosoftware.fsmeditor.core.VertexType.State } }
+        val before = states()
+
+        // Placed with a one-shot tool, a state opens its name for editing; the next quick click there is a plain press.
+        canvas.setTool("state")
+        click(500, 400, 1)
+        assertEquals(before + 1, states())
+        assertTrue(inlineEditing())
+        click(500, 400, 2)
+        assertFalse(inlineEditing())
+        assertEquals(before + 1, states())
+
+        // Two plain clicks on empty canvas: a double-click, which adds a state.
+        click(1100, 700, 1)
+        click(1100, 700, 1)
+        assertEquals(before + 2, states())
+    }
+
     private fun invalidateAll(c: java.awt.Component) {
         c.invalidate()
         if (c is java.awt.Container) c.components.forEach { invalidateAll(it) }

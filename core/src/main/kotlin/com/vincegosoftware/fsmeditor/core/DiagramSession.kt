@@ -417,7 +417,8 @@ class DiagramSession(model: FsmModel) {
     fun reverse(t: Transition) {
         val s = index.vertex(t.source)
         val g = index.vertex(t.target)
-        if (g == null || g.type == VertexType.Initial || (s != null && (s.type == VertexType.Final || s.type == VertexType.Terminate))) {
+        // Reversed, the target becomes the source: refused as drawing it that way would be.
+        if (g == null || s == null || connectProblem(g, s) != null) {
             say("This transition cannot be reversed.")
             return
         }
@@ -1150,16 +1151,24 @@ class DiagramSession(model: FsmModel) {
     fun paste(data: ClipboardFragment?, at: PointD? = null) {
         if (data == null || data.vertices.isEmpty()) return
         reindex()
+        // A connection point reference whose state is neither copied nor in this diagram is left out, with its transitions.
+        val copied = data.vertices.map { it.id }.toSet()
+        val vertices = data.vertices.filter { it.type != VertexType.ConnectionPointRef || it.parent in copied || index.vertex(it.parent) != null }
+        if (vertices.isEmpty()) return
         val map = HashMap<String, String>()
-        for (v in data.vertices) {
+        for (v in vertices) {
             map[v.id] = newId("v")
             for (r in v.regions) map[r.id] = newId("r")
         }
+        // Parents copied in a cycle (crafted clipboard text): nothing would be a root.
+        if (vertices.none { it.parent !in map }) return
+        // Before the comments, whose anchors may be copied transitions.
+        for (t in data.transitions) if (t.source in map && t.target in map) map[t.id] = newId("t")
         val offX: Double
         val offY: Double
         var target: RegionRect? = null
         if (at != null) {
-            val roots = data.vertices.filter { it.parent !in map }
+            val roots = vertices.filter { it.parent !in map }
             offX = Geometry.snap(at.x) - roots.minOf { it.x }
             offY = Geometry.snap(at.y) - roots.minOf { it.y }
             target = Geometry.regionAt(index, at, emptySet())
@@ -1170,7 +1179,7 @@ class DiagramSession(model: FsmModel) {
         }
         val added = ArrayList<Vertex>()
         val groups = HashMap<String, String>()
-        for (src in data.vertices) {
+        for (src in vertices) {
             val v = src.copy()
             v.id = map[src.id]!!
             // A copied group is a new group; a lone copied member belongs to none (see FsmModel.normalizeGroups).
@@ -1197,7 +1206,7 @@ class DiagramSession(model: FsmModel) {
         for (src in data.transitions) {
             if (src.source !in map || src.target !in map) continue
             val t = src.copy()
-            t.id = newId("t")
+            t.id = map[src.id]!!
             t.source = map[src.source]!!
             t.target = map[src.target]!!
             t.points = t.points.mapTo(mutableListOf()) { PointD(it.x + offX, it.y + offY) }

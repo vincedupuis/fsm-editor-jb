@@ -34,7 +34,7 @@ class ParityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups"])
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges"])
     fun writesTheSameXmi(name: String) {
         val text = read(fixture("$name.fsm"))
         assertEquals(read(fixture("$name.roundtrip.xmi")), Xmi.toXmi(Xmi.fromXmi(text)))
@@ -54,7 +54,7 @@ class ParityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups"])
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges"])
     fun casesValidateTheSame(name: String) {
         val model = Xmi.fromXmi(read(fixture("$name.fsm")))
         assertEquals(format(expected.obj("cases").obj(name).obj("issues")), format(Validation.validate(model)))
@@ -69,6 +69,17 @@ class ParityTest {
         } else {
             assertEquals(expected.obj("error"), actual.error, what)
         }
+    }
+
+    @Test
+    fun keepsATimeTriggerAndAnEventWhoseIdsWouldBeTheSameApart() {
+        val model = FsmModel.createDefault("M")
+        model.transitions.add(Transition("t1", "v_idle", "v_idle").apply { triggers.add("after(1s)") })
+        model.transitions.add(Transition("t2", "v_idle", "v_idle").apply { triggers.add("after_1s_") })
+        val xmi = Xmi.toXmi(model)
+        assertEquals(listOf("", "after(1s)", "after_1s_"), Xmi.fromXmi(xmi).transitions.map { it.triggers.joinToString(",") })
+        val ids = Regex("xmi:id=\"([^\"]*)\"").findAll(xmi).map { it.groupValues[1] }.toList()
+        assertEquals(ids.size, ids.toSet().size)
     }
 
     @Test

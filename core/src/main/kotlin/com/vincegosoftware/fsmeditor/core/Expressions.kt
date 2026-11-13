@@ -12,6 +12,40 @@ class Check<out T> private constructor(val ok: Boolean, private val result: T?, 
     }
 }
 
+/**
+ * White space as JavaScript's `trim()` and regex `\s` see it (the reference edition's grammar):
+ * U+0009–U+000D, U+0020, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000
+ * and U+FEFF. Kotlin's [Char.isWhitespace] differs (U+001C–U+001F in, U+FEFF out), and Java's
+ * regex `\s` is ASCII only.
+ */
+object JsWhitespace {
+    /** The set as a regex character class, in place of `\s`. */
+    const val CLASS = "[\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]"
+
+    /** Is [c] white space for JavaScript? */
+    operator fun contains(c: Char): Boolean =
+        c in '\u0009'..'\u000D' || c == ' ' || c == '\u00A0' || c == '\u1680' || c in '\u2000'..'\u200A' ||
+            c == '\u2028' || c == '\u2029' || c == '\u202F' || c == '\u205F' || c == '\u3000' || c == '\uFEFF'
+
+    /** Like JavaScript's `String.prototype.trim()`; null gives "". */
+    fun trim(text: String?): String = (text ?: "").trim { it in this }
+
+    /** Splits on runs of white space, dropping empty items, like `split(/\s+/).filter(Boolean)`. */
+    fun split(text: String?): MutableList<String> {
+        val output = ArrayList<String>()
+        val t = text ?: ""
+        var i = 0
+        while (i < t.length) {
+            while (i < t.length && t[i] in this) i++
+            var j = i
+            while (j < t.length && t[j] !in this) j++
+            if (j > i) output.add(t.substring(i, j))
+            i = j
+        }
+        return output
+    }
+}
+
 enum class ConditionOp { Call, Not, And, Or }
 
 /** A condition tree: a call, a negation, or a conjunction/disjunction. */
@@ -45,10 +79,12 @@ class Condition(
  * ```
  */
 object Expressions {
-    private val NAME = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
-    private val TIME = Regex("^after\\s*\\(\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(ms|s|m|h)\\s*\\)$")
-    private val AFTER_WORD = Regex("^after\\b")
-    private val WHEN_WORD = Regex("^when\\b")
+    // JavaScript's \s, \b and . spelled out (see JsWhitespace), and \z for its $: Java's $ also matches before a final line terminator.
+    private const val WS = JsWhitespace.CLASS
+    private val NAME = Regex("^[A-Za-z_][A-Za-z0-9_]*\\z")
+    private val TIME = Regex("^after$WS*\\($WS*([0-9]+(?:\\.[0-9]+)?)$WS*(ms|s|m|h)$WS*\\)\\z")
+    private val AFTER_WORD = Regex("^after(?![A-Za-z0-9_])")
+    private val WHEN_WORD = Regex("^when(?![A-Za-z0-9_])")
 
     private class SyntaxProblem(message: String) : Exception(message)
 
@@ -65,7 +101,7 @@ object Expressions {
         var i = 0
         while (i < text.length) {
             val c = text[i]
-            if (c.isWhitespace()) {
+            if (c in JsWhitespace) {
                 i++
             } else if (isNameStart(c)) {
                 var j = i + 1
@@ -172,7 +208,7 @@ object Expressions {
         return "(".repeat(c.parens) + s + ")".repeat(c.parens)
     }
 
-    private fun trim(text: String?) = (text ?: "").trim()
+    private fun trim(text: String?) = JsWhitespace.trim(text)
 
     /** Condition built from calls, !, && and ||. Empty text is allowed (no condition). */
     fun checkCondition(text: String?): Check<String> {
@@ -209,7 +245,7 @@ object Expressions {
         return if (r.ok) Check.success(r.value.joinToString("; ") { "$it()" }) else Check.fail(r.error!!)
     }
 
-    private val TRAILING_SEMICOLON = Regex(";\\s*$")
+    private val TRAILING_SEMICOLON = Regex(";$WS*\\z")
 
     /** Names of the functions a behavior calls, in order. */
     fun parseActions(text: String?): Check<List<String>> {
@@ -274,7 +310,7 @@ object Expressions {
     fun checkList(text: String?, check: (String) -> Check<String>): Check<List<String>> {
         val output = ArrayList<String>()
         for (raw in (text ?: "").split(',')) {
-            val item = raw.trim()
+            val item = JsWhitespace.trim(raw)
             if (item.isEmpty()) continue
             val r = check(item)
             if (!r.ok) return Check.fail(r.error!!)
@@ -295,7 +331,7 @@ object Expressions {
         return m.groupValues[1].toDouble() * factor
     }
 
-    private val CALL_TAIL = Regex("\\s*\\(.*$")
+    private val CALL_TAIL = Regex("$WS*\\([^\\n\\r\\u2028\\u2029]*\\z")
 
     private fun stripCall(s: String) = CALL_TAIL.replace(s, "")
 }

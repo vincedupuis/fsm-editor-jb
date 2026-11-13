@@ -34,6 +34,20 @@ class FsmCliTest : TestCase() {
         assertTrue(failed.errors.joinToString("\n"), failed.issues.any { it.severity == Severity.Error && File(it.file) == broken && it.line > 0 })
     }
 
+    /** Cancelling the progress indicator destroys the process and reports a cancelled run. */
+    fun testCancelDestroysTheProcess() {
+        val sleep = File("/bin/sleep")
+        Assume.assumeTrue("no /bin/sleep", sleep.canExecute())
+        val indicator = com.intellij.openapi.progress.EmptyProgressIndicator(com.intellij.openapi.application.ModalityState.nonModal())
+        java.util.Timer(true).schedule(object : java.util.TimerTask() {
+            override fun run() = indicator.cancel()
+        }, 300)
+        val started = System.currentTimeMillis()
+        val r = FsmCli.run(sleep, listOf("30"), File("."), indicator)
+        assertTrue(r.cancelled)
+        assertTrue(System.currentTimeMillis() - started < 10_000)
+    }
+
     fun testGeneratesCodeWithJinjaTemplates() {
         Assume.assumeTrue("fsm-generator was not unpacked into plugin/generator/${FsmCli.platform}", generator.isFile)
         val out = FileUtil.createTempDirectory("fsm-generator", "out")

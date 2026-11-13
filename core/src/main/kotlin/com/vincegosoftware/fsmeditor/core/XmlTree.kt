@@ -1,8 +1,9 @@
 package com.vincegosoftware.fsmeditor.core
 
-import java.math.BigDecimal
+import java.math.BigInteger
 import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.log10
 
 /**
  * A read-only XML element whose element and attribute names use canonical
@@ -89,7 +90,7 @@ object XmlTree {
 
         private fun skipSpace() {
             var j = i
-            while (j < text.length && text[j].isWhitespace()) j++
+            while (j < text.length && text[j] in JsWhitespace) j++
             advance(j)
         }
 
@@ -310,20 +311,89 @@ object Num {
     /** Rounds to 0.1. */
     fun r1(n: Double): Double = floor(n * 10 + 0.5) / 10
 
-    /** Shortest text of a number, like JavaScript prints it: `60`, `12.5`, never `-0` or an exponent. */
+    /**
+     * The text JavaScript's `String(n)` gives: the shortest digits that read back as [n],
+     * `60`, `12.5`, `1e-7`, `1.5e+21`; `-0` gives `0`. NaN and infinities give `0`.
+     * Computed exactly, so it doesn't depend on the JDK's own formatting.
+     */
     fun format(n: Double): String {
         if (n.isNaN() || n.isInfinite()) return "0"
         if (n == 0.0) return "0"
         if (n == floor(n) && abs(n) < 1e15) return n.toLong().toString()
-        // Double.toString gives the shortest digits that read back the same number.
-        return BigDecimal(n.toString()).stripTrailingZeros().toPlainString()
+        if (n < 0) return "-" + format(-n)
+        val (digits, point) = shortestDigits(n)
+        return layout(digits, point)
+    }
+
+    /**
+     * Shortest digits (no trailing zero) such that 0.digits × 10^point reads back as [n] (> 0),
+     * the closest to [n] when several do (ECMAScript Number::toString).
+     */
+    private fun shortestDigits(n: Double): Pair<String, Int> {
+        val bits = n.toRawBits()
+        val biased = ((bits shr 52) and 0x7FFL).toInt()
+        val fraction = bits and 0xFFFFFFFFFFFFFL
+        val f = if (biased == 0) fraction else fraction or (1L shl 52)
+        val e = if (biased == 0) -1074 else biased - 1075
+        // n = f × 2^e. In units of 2^(e-2): n is 4f, and the numbers that read back as n lie
+        // between 4f-2 (4f-1 just above a power of two) and 4f+2, the bounds included when f is even.
+        val v = BigInteger.valueOf(f).shiftLeft(2)
+        val hi = v + BigInteger.valueOf(2)
+        val lo = v - BigInteger.valueOf(if (fraction == 0L && biased > 1) 1L else 2L)
+        val inclusive = (f and 1L) == 0L
+        val twoUp = if (e - 2 >= 0) BigInteger.ONE.shiftLeft(e - 2) else BigInteger.ONE
+        val twoDown = if (e - 2 < 0) BigInteger.ONE.shiftLeft(2 - e) else BigInteger.ONE
+        fun pow10(x: Int): BigInteger = if (x > 0) BigInteger.TEN.pow(x) else BigInteger.ONE
+
+        // Decimal exponent k with 10^k <= n < 10^(k+1).
+        fun atLeastPow10(x: Int) = v * twoUp * pow10(-x) >= twoDown * pow10(x)
+        var k = floor(log10(n)).toInt()
+        while (!atLeastPow10(k)) k--
+        while (atLeastPow10(k + 1)) k++
+
+        for (p in 1..17) {
+            // Candidates with p digits are N × 10^s; n / 10^s = num / den.
+            val s = k - p + 1
+            val scale = twoUp * pow10(-s)
+            val den = twoDown * pow10(s)
+            val numLo = lo * scale
+            val numHi = hi * scale
+            val (down, rem) = (v * scale).divideAndRemainder(den)
+            val up = down + BigInteger.ONE
+            fun reads(c: BigInteger): Boolean {
+                val x = c * den
+                return if (inclusive) x >= numLo && x <= numHi else x > numLo && x < numHi
+            }
+            val downOk = reads(down)
+            val upOk = reads(up)
+            if (!downOk && !upOk) continue
+            val chosen = if (downOk && upOk) {
+                val c = rem.shiftLeft(1).compareTo(den)
+                if (c < 0) down else if (c > 0) up else if (!down.testBit(0)) down else up
+            } else if (downOk) down else up
+            val text = chosen.toString()
+            return text.trimEnd('0') to s + text.length
+        }
+        // 17 digits always identify a double.
+        throw IllegalStateException("No round-trip digits for $n")
+    }
+
+    /** Lays out 0.[d] × 10^[n] as ECMAScript Number::toString does. */
+    private fun layout(d: String, n: Int): String {
+        val k = d.length
+        if (n in k..21) return d + "0".repeat(n - k)
+        if (n in 1..21) return d.substring(0, n) + "." + d.substring(n)
+        if (n in -5..0) return "0." + "0".repeat(-n) + d
+        val exp = n - 1
+        val tail = "e" + (if (exp < 0) "-" else "+") + abs(exp)
+        return if (k == 1) d + tail else d.substring(0, 1) + "." + d.substring(1) + tail
     }
 
     private val NUMBER = Regex("^[+-]?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
 
     /** Parses a number of an XMI attribute (invalid gives 0). */
     fun parse(s: String?): Double {
-        val t = (s ?: "").trim()
+        val t = JsWhitespace.trim(s)
         return if (NUMBER.matches(t)) t.toDouble() else 0.0
     }
 }

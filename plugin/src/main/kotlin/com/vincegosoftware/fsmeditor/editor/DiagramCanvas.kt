@@ -100,7 +100,6 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         private set
 
     init {
-        Geo.textMeasure = ::labelWidth
         isFocusable = true
         isOpaque = true
         val mouse = Mouse()
@@ -241,10 +240,11 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
 
     private fun create(toolId: String, p: PointD) {
         val s = s ?: return
-        val v = s.createVertex(toolId, p)
+        // Refused (a connection point reference off a submachine state): the tool stays armed, as in the other editors.
+        val v = s.createVertex(toolId, p) ?: return
         editor.renderProps()
         toolDone()
-        if (v != null && (v.type == VertexType.State || v.type == VertexType.Comment)) {
+        if (v.type == VertexType.State || v.type == VertexType.Comment) {
             SwingUtilities.invokeLater { editor.startInlineEdit(v.id) }
         }
     }
@@ -258,11 +258,6 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
 
     /** The Trace Player's highlights, not in exports. */
     private val trace: TraceView? get() = if (exporting) null else editor.trace
-
-    private val fontFamily: String get() = JBFont.label().family
-
-    private fun font(size: Double, bold: Boolean = false, italic: Boolean = false): Font =
-        Font(fontFamily, (if (bold) Font.BOLD else 0) or (if (italic) Font.ITALIC else 0), 12).deriveFont(size.toFloat())
 
     override fun paintComponent(g0: Graphics) {
         val g = g0.create() as Graphics2D
@@ -371,7 +366,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     }
 
     /** Width of a transition label as drawn, for fitting the view. */
-    fun labelWidth(label: String): Double = getFontMetrics(font(11.0)).stringWidth(label).toDouble()
+    fun labelWidth(label: String): Double = measureLabel(label)
 
     private enum class IssueLevel { None, Warning, Error }
 
@@ -782,48 +777,52 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     /** [atSource]: for an end, its source end rather than its target end. */
     private class Hit(val kind: HitKind, val id: String = "", val handle: String = "", val index: Int = 0, val atSource: Boolean = false)
 
+    /**
+     * As the layers of the VS Code edition, topmost first: the connect handle, the resize handles, the region
+     * separators (not while a tool is armed), the selected transition's ends (target first) and bend points, then items.
+     */
     private fun hitTest(s: DiagramSession, p: PointD): Hit {
         val ix = s.index
         val tolerance = 2 / zoom
-        if (s.selection.size == 1) {
-            val only = ix.vertex(s.selection.first())
-            if (only != null) {
-                val c = connectHandle(only)
-                if (only.type != VertexType.Final && only.type != VertexType.Terminate && Geo.dist(p, c) <= 7 + tolerance) {
-                    return Hit(HitKind.Handle, handle = "connect")
-                }
-                if (only.type in RESIZABLE) {
-                    for (corner in CORNERS) {
-                        val rh = resizeHandle(only, corner)
-                        if (RectD(rh.x - tolerance, rh.y - tolerance, rh.w + tolerance * 2, rh.h + tolerance * 2).contains(p)) {
-                            return Hit(HitKind.Handle, handle = "resize-$corner")
-                        }
+        val only = if (s.selection.size == 1) ix.vertex(s.selection.first()) else null
+        if (only != null) {
+            val c = connectHandle(only)
+            if (only.type != VertexType.Final && only.type != VertexType.Terminate && Geo.dist(p, c) <= 7 + tolerance) {
+                return Hit(HitKind.Handle, handle = "connect")
+            }
+            if (only.type in RESIZABLE) {
+                for (corner in CORNERS) {
+                    val rh = resizeHandle(only, corner)
+                    if (RectD(rh.x - tolerance, rh.y - tolerance, rh.w + tolerance * 2, rh.h + tolerance * 2).contains(p)) {
+                        return Hit(HitKind.Handle, handle = "resize-$corner")
                     }
                 }
             }
-            val selected = ix.transition(s.selection.first())
-            val route = if (selected != null && Geo.isDrawn(ix, selected)) Geo.route(ix, selected) else null
-            if (selected != null && route != null) {
-                if (Geo.dist(p, route.last()) <= 4.5 + tolerance) return Hit(HitKind.End, selected.id)
-                if (Geo.dist(p, route.first()) <= 4.5 + tolerance) return Hit(HitKind.End, selected.id, atSource = true)
-            }
-            if (selected != null) {
-                for ((i, wp) in waypointHandles(s, selected).withIndex()) {
-                    if (Geo.dist(p, wp) <= 4.5 + tolerance) return Hit(HitKind.Waypoint, selected.id, index = i)
+        }
+        // The lines between regions: dragged, they resize the region before them. An armed tool passes through them.
+        if (tool == null) {
+            for (st in s.model.vertices.asReversed()) {
+                val rects = Geo.regionRects(s.model, st)
+                for (i in 0 until rects.size - 1) {
+                    val r = rects[i].rect
+                    val near = if (st.regionLayout == RegionLayout.Horizontal) {
+                        abs(p.x - r.right) <= 3 + tolerance && p.y >= r.y && p.y <= r.bottom
+                    } else {
+                        abs(p.y - r.bottom) <= 3 + tolerance && p.x >= r.x && p.x <= r.right
+                    }
+                    if (near) return Hit(HitKind.Handle, st.id, handle = "sep", index = i)
                 }
             }
         }
-        // The lines between regions: dragged, they resize the region before them.
-        for (st in s.model.vertices.asReversed()) {
-            val rects = Geo.regionRects(s.model, st)
-            for (i in 0 until rects.size - 1) {
-                val r = rects[i].rect
-                val near = if (st.regionLayout == RegionLayout.Horizontal) {
-                    abs(p.x - r.right) <= 3 + tolerance && p.y >= r.y && p.y <= r.bottom
-                } else {
-                    abs(p.y - r.bottom) <= 3 + tolerance && p.x >= r.x && p.x <= r.right
-                }
-                if (near) return Hit(HitKind.Handle, st.id, handle = "sep", index = i)
+        val selected = if (s.selection.size == 1) ix.transition(s.selection.first()) else null
+        if (selected != null) {
+            val route = if (Geo.isDrawn(ix, selected)) Geo.route(ix, selected) else null
+            if (route != null) {
+                if (Geo.dist(p, route.last()) <= 4.5 + tolerance) return Hit(HitKind.End, selected.id)
+                if (Geo.dist(p, route.first()) <= 4.5 + tolerance) return Hit(HitKind.End, selected.id, atSource = true)
+            }
+            for ((i, wp) in waypointHandles(s, selected).withIndex()) {
+                if (Geo.dist(p, wp) <= 4.5 + tolerance) return Hit(HitKind.Waypoint, selected.id, index = i)
             }
         }
         return itemAt(s, p, true)
@@ -1018,12 +1017,16 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     private fun additive(e: InputEvent) = e.isShiftDown || e.isControlDown || e.isMetaDown
 
     private inner class Mouse : MouseAdapter() {
+        /** Time and position of the last plain left press, for double-click detection (as in the VS Code edition). */
+        private var lastDown: Pair<Long, Point>? = null
+
         override fun mousePressed(e: MouseEvent) {
             val s = s ?: return
             requestFocusInWindow()
             editor.commitInlineEdit()
             val p = toWorld(e.point)
 
+            if (SwingUtilities.isMiddleMouseButton(e) || SwingUtilities.isRightMouseButton(e) || space || tool != null) lastDown = null
             if (SwingUtilities.isMiddleMouseButton(e) || SwingUtilities.isRightMouseButton(e) || space) {
                 drag = DragState(DragKind.Pan).also {
                     it.screenStart = e.point
@@ -1036,10 +1039,15 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 return
             }
             if (!SwingUtilities.isLeftMouseButton(e)) return
-            if (e.clickCount == 2) {
-                drag = null
-                doubleClick(s, p, e)
-                return
+            // With a tool armed, every click uses it; a double-click with nothing to do is a plain press.
+            if (tool == null) {
+                val last = lastDown
+                val dbl = last != null && e.`when` - last.first < 500 && e.point.distance(last.second) < 5
+                lastDown = if (dbl) null else e.`when` to e.point
+                if (dbl && doubleClick(s, p, e)) {
+                    drag = null
+                    return
+                }
             }
             s.reindex()
             var hit = hitTest(s, p)
@@ -1361,15 +1369,17 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         }
     }
 
-    private fun doubleClick(s: DiagramSession, p: PointD, e: MouseEvent) {
-        if (tool != null) return
+    /** Double-click actions; false when the target has none. */
+    private fun doubleClick(s: DiagramSession, p: PointD, e: MouseEvent): Boolean {
         s.reindex()
         val hit = hitTest(s, p)
         when (hit.kind) {
             HitKind.Waypoint -> s.removeWaypoint(s.index.transition(hit.id)!!, hit.index)
             HitKind.Label -> editor.startInlineEdit(hit.id)
             HitKind.Transition -> {
-                s.addWaypoint(s.index.transition(hit.id)!!, p)
+                val t = s.index.transition(hit.id)!!
+                if (Geo.isLoop(s.index, t)) return false // a self-transition loop has no bend points but its corners
+                s.addWaypoint(t, p)
                 editor.renderProps()
             }
             HitKind.Vertex -> {
@@ -1378,9 +1388,10 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 else editor.startInlineEdit(v.id)
             }
             HitKind.Empty -> create("state", p)
-            HitKind.Handle, HitKind.End -> {}
+            HitKind.Handle, HitKind.End -> return false
         }
         repaint()
+        return true
     }
 
     // ---------------------------------------------------------------- toolbox drag and drop
@@ -1505,6 +1516,30 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     }
 
     companion object {
+        init {
+            // Set once, to a function of no canvas: a reference to a canvas would keep its closed editor alive.
+            Geo.textMeasure = ::measureLabel
+        }
+
+        private fun font(size: Double, bold: Boolean = false, italic: Boolean = false): Font =
+            Font(JBFont.label().family, (if (bold) Font.BOLD else 0) or (if (italic) Font.ITALIC else 0), 12).deriveFont(size.toFloat())
+
+        /**
+         * Measures as a canvas's own getFontMetrics did on the main screen: its scale, no text antialiasing nor fractional
+         * metrics (SwingUtilities2's font render context for a component without UI).
+         */
+        private val measuring: Graphics2D by lazy {
+            BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB).createGraphics().apply {
+                if (!GraphicsEnvironment.isHeadless()) {
+                    transform = GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration.defaultTransform
+                }
+                setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF)
+                setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_DEFAULT)
+            }
+        }
+
+        private fun measureLabel(label: String): Double = measuring.getFontMetrics(font(11.0)).stringWidth(label).toDouble()
+
         /** Prefix of the text a toolbox item drags onto the canvas. */
         const val TOOL_PREFIX = "fsm-editor-tool:"
 

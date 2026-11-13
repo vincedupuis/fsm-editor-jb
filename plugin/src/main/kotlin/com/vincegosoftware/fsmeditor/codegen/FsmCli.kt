@@ -3,6 +3,7 @@ package com.vincegosoftware.fsmeditor.codegen
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.openapi.application.PathManager
+import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.util.SystemInfo
 import com.vincegosoftware.fsmeditor.core.Severity
 import java.io.File
@@ -18,6 +19,8 @@ class CliResult(
     val issues: List<CliIssue>,
     /** Files the generator wrote (full paths). */
     val written: List<String>,
+    /** Whether the run was cancelled, its process destroyed. */
+    val cancelled: Boolean = false,
 )
 
 /**
@@ -89,13 +92,15 @@ object FsmCli {
     fun commandLine(cli: File, args: List<String>): String =
         (listOf(cli.path) + args).joinToString(" ") { if (it.isNotEmpty() && it.none { c -> c == ' ' || c == '"' || c == '\t' }) it else "\"" + it.replace("\"", "\\\"") + "\"" }
 
-    fun run(cli: File, args: List<String>, workingDirectory: File): CliResult {
+    /** Runs [cli]; cancelling [indicator] destroys its process. */
+    fun run(cli: File, args: List<String>, workingDirectory: File, indicator: ProgressIndicator? = null): CliResult {
         // Unpacked plugin files may lose their executable bit.
         if (!SystemInfo.isWindows && !cli.canExecute()) cli.setExecutable(true)
         val command = GeneralCommandLine(listOf(cli.path) + args)
             .withWorkDirectory(workingDirectory)
             .withCharset(StandardCharsets.UTF_8)
-        val out = CapturingProcessHandler(command).runProcess(5 * 60 * 1000)
+        val handler = CapturingProcessHandler(command)
+        val out = if (indicator != null) handler.runProcessWithProgressIndicator(indicator, 5 * 60 * 1000) else handler.runProcess(5 * 60 * 1000)
         val output = out.stdoutLines.filter { it.isNotEmpty() }
         val errors = out.stderrLines.filter { it.isNotEmpty() }
         val written = output.filter { it.startsWith("wrote ") }.map { resolve(workingDirectory, it.substring(6)) }
@@ -108,8 +113,8 @@ object FsmCli {
             }
             CliIssue(resolve(workingDirectory, m.groupValues[1]), m.groupValues[2].toInt(), severity, m.groupValues[4])
         }
-        val exitCode = if (out.isTimeout) -1 else out.exitCode
-        return CliResult(exitCode, output, if (out.isTimeout) errors + "${cli.nameWithoutExtension} did not finish within 5 minutes." else errors, issues, written)
+        val exitCode = if (out.isTimeout || out.isCancelled) -1 else out.exitCode
+        return CliResult(exitCode, output, if (out.isTimeout) errors + "${cli.nameWithoutExtension} did not finish within 5 minutes." else errors, issues, written, out.isCancelled)
     }
 
     private fun resolve(dir: File, path: String): String = File(path).let { if (it.isAbsolute) it else File(dir, path) }.normalize().path

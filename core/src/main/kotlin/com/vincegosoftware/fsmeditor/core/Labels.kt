@@ -10,12 +10,12 @@ object Labels {
             if (t.precondition.isNotEmpty()) s += "[${t.precondition}] "
             s += trig
             if (t.postcondition.isNotEmpty()) s += " / [${t.postcondition}]"
-            return s.trim()
+            return JsWhitespace.trim(s)
         }
         var s = trig
         if (t.guard.isNotEmpty()) s += " [${t.guard}]"
         if (t.effect.isNotEmpty()) s += " / ${t.effect}"
-        return s.trim()
+        return JsWhitespace.trim(s)
     }
 
     /** The label as stacked lines: events, `[guard]`, `/ effect` (protocol: `[pre]`, event, `/ [post]`). */
@@ -44,8 +44,10 @@ object Labels {
     fun allowsElse(source: Vertex?): Boolean =
         source != null && (source.type == VertexType.Choice || source.type == VertexType.Junction)
 
-    private val PROTOCOL_LABEL = Regex("^\\s*(?:\\[([^\\]]*)\\])?([^/]*?)\\s*(?:/\\s*\\[([^\\]]*)\\])?\\s*$")
-    private val TRAILING_GUARD = Regex("\\[([^\\]]*)\\]\\s*$")
+    // JavaScript's \s spelled out (see JsWhitespace), and \z for its $.
+    private const val WS = JsWhitespace.CLASS
+    private val PROTOCOL_LABEL = Regex("^$WS*(?:\\[([^\\]]*)\\])?([^/]*?)$WS*(?:/$WS*\\[([^\\]]*)\\])?$WS*\\z")
+    private val TRAILING_GUARD = Regex("\\[([^\\]]*)\\]$WS*\\z")
 
     /**
      * Parses a transition label into [t]. Returns an error message and leaves

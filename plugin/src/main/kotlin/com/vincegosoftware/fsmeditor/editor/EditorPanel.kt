@@ -337,6 +337,8 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
 
     private fun onCommitted() {
         val s = session ?: return
+        // The document can't be read: writing the model shown before would replace the text being fixed.
+        if (parseError.isVisible) return
         refreshLayoutIssues()
         host.write(s.model)
         canvas.repaint()

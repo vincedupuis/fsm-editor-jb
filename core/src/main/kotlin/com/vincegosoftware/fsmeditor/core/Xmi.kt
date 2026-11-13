@@ -61,7 +61,10 @@ object Xmi {
         fun eventFor(trigger: String): String {
             events[trigger]?.let { return it }
             val time = TIME_TRIGGER.find(trigger)
-            val safe = UNSAFE.replace(trigger, "_")
+            var safe = UNSAFE.replace(trigger, "_")
+            // after(1s) and an event named after_1s_ would share an id: the later one gets another _.
+            val taken = events.values.toHashSet()
+            while ("ev_$safe" in taken) safe += "_"
             val id = "ev_$safe"
             if (time != null) {
                 eventElements.add(
@@ -334,11 +337,9 @@ object Xmi {
     private fun kids(el: XmlElem, name: String): List<XmlElem> = el.children.filter { it.name == name }
     private fun kid(el: XmlElem?, name: String): XmlElem? = el?.children?.firstOrNull { it.name == name }
 
-    private val REF_SEPARATORS = Regex("[ \t\r\n]+")
-
     /** A reference property, written as an attribute (`a="id1 id2"`) or as child elements (`<a xmi:idref|href>`). */
     private fun refs(el: XmlElem, name: String): MutableList<String> {
-        val output = (el.attr(name) ?: "").split(REF_SEPARATORS).filter { it.isNotEmpty() }.toMutableList()
+        val output = JsWhitespace.split(el.attr(name))
         for (c in kids(el, name)) {
             val r = c.attr("xmi:idref") ?: c.attr("href")
             if (!r.isNullOrEmpty()) output.add(r)
@@ -355,12 +356,12 @@ object Xmi {
     }
 
     /** Text of an opaque behavior or constraint (its first body). */
-    private fun bodyOf(el: XmlElem?): String {
+    private fun bodyOf(el: XmlElem?, trim: Boolean = true): String {
         if (el == null) return ""
         val spec = kid(el, "specification") ?: el
         val b = kid(spec, "body")
-        if (b != null) return b.text.trim()
-        return (spec.attr("body") ?: spec.attr("value") ?: "").trim()
+        val text = b?.text ?: spec.attr("body") ?: spec.attr("value") ?: ""
+        return if (trim) JsWhitespace.trim(text) else text
     }
 
     private fun walk(el: XmlElem): Sequence<XmlElem> = sequence {
@@ -488,7 +489,7 @@ object Xmi {
                     "transition" -> readTransition(c)
                     "ownedComment" -> {
                         val comment = vertexBase(c, VertexType.Comment, id)
-                        comment.text = bodyOf(c)
+                        comment.text = bodyOf(c, false)
                         comment.anchors = refs(c, "annotatedElement")
                         model.vertices.add(comment)
                     }
@@ -544,7 +545,7 @@ object Xmi {
                 for (g in kids(ext, "group")) {
                     val id = g.attr("id") ?: ""
                     if (id.isEmpty()) continue
-                    for (member in (g.attr("members") ?: "").split(Regex("\\s+"))) {
+                    for (member in JsWhitespace.split(g.attr("members"))) {
                         val gv = byId[member]
                         if (gv != null && gv.group.isEmpty()) gv.group = id
                     }

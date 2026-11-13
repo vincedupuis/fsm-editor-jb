@@ -39,7 +39,7 @@ object Extraction {
     /** The name proposed for the new machine: the extracted state's name when there is one, else `Submachine`. */
     fun proposedName(model: FsmModel, selected: Collection<String>): String {
         val states = extractedRoots(model, selected).filter { it.type == VertexType.State }
-        val name = if (states.size == 1) states[0].name.trim() else ""
+        val name = if (states.size == 1) JsWhitespace.trim(states[0].name) else ""
         return name.ifEmpty { "Submachine" }
     }
 
@@ -217,7 +217,7 @@ object Extraction {
         // Default entry: the target of the new machine's initial transition, when it has no guard or effect.
         val initial = machineVertices.firstOrNull { it.type == VertexType.Initial && it.parent == region.id }
         val initialOut = if (initial != null) machineTransitions.filter { it.source == initial.id } else emptyList()
-        val defaultTarget = if (initialOut.size == 1 && initialOut[0].guard.isBlank() && initialOut[0].effect.isBlank()) initialOut[0].target else null
+        val defaultTarget = if (initialOut.size == 1 && JsWhitespace.trim(initialOut[0].guard).isEmpty() && JsWhitespace.trim(initialOut[0].effect).isEmpty()) initialOut[0].target else null
 
         // By inner target: the reference on the submachine state that incoming transitions go to.
         val entryRefFor = HashMap<String, String>()

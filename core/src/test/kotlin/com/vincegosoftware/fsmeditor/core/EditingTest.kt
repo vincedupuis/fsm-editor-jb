@@ -275,6 +275,14 @@ class EditingTest {
         assertEquals("../Order.fsm#sm", Hrefs.forFile(other, doc, "sm"))
         assertEquals("sub dir/é#x", Hrefs.decodeUri(Hrefs.encodeUri("sub dir/é#x")))
         assertEquals("100%", Hrefs.decodeUri("100%"))
+        assertEquals("My Machine.fsm", Hrefs.decodeUri("My%20Machine.fsm"))
+        assertEquals("café.fsm", Hrefs.decodeUri("caf%C3%A9.fsm"))
+        assertEquals("a%23b%2Fc", Hrefs.decodeUri("a%23b%2Fc"))
+        assertEquals("café%zz", Hrefs.decodeUri("caf%C3%A9%zz"))
+        assertEquals("a%E0.fsm", Hrefs.decodeUri("a%E0.fsm"))
+        assertEquals("a%E0A.fsm", Hrefs.decodeUri("a%E0%41.fsm"))
+        assertEquals("a%C0%80%", Hrefs.decodeUri("a%C0%80%"))
+        assertEquals("sm", Hrefs.resolve("/tmp/M.fsm", "a.fsm#sm#x").second)
     }
 
     @Test
@@ -287,6 +295,37 @@ class EditingTest {
         assertEquals("123456789.5", Num.format(123456789.5))
         assertEquals(0.3, Num.r1(0.25))
         assertEquals(-2.0, Num.round(-2.5))
+    }
+
+    @Test
+    fun numbersPrintLikeJavaScript() {
+        for ((n, text) in listOf(
+            0.0 to "0",
+            -0.0 to "0",
+            1.0 to "1",
+            0.1 to "0.1",
+            0.1 + 0.2 to "0.30000000000000004",
+            123.456 to "123.456",
+            1e-7 to "1e-7",
+            1.5e-7 to "1.5e-7",
+            -1.5e-7 to "-1.5e-7",
+            0.000001 to "0.000001",
+            1.23e-18 to "1.23e-18",
+            1e15 to "1000000000000000",
+            1e15 + 0.5 to "1000000000000000.5",
+            18014398509481984.0 to "18014398509481984",
+            1e21 to "1e+21",
+            1.5e21 to "1.5e+21",
+            1180591620717411303424.0 to "1.1805916207174113e+21",
+            1e23 to "1e+23",
+            123456789012345680000.0 to "123456789012345680000",
+            5e-324 to "5e-324",
+            1.5e-323 to "1.5e-323",
+            2.2250738585072014e-308 to "2.2250738585072014e-308",
+            1.7976931348623157e308 to "1.7976931348623157e+308",
+            9.5367431640625e-7 to "9.5367431640625e-7",
+            -2.5 to "-2.5",
+        )) assertEquals(text, Num.format(n), "$n")
     }
     private fun addState(
         s: DiagramSession, id: String, parent: String, x: Double, y: Double, w: Double = 140.0, h: Double = 60.0,

@@ -1,6 +1,10 @@
 package com.vincegosoftware.fsmeditor.core
 
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.text.Collator
@@ -43,27 +47,59 @@ object Hrefs {
     }
 
     /** Decodes %XX escapes as UTF-8; text that isn't a valid escape is kept as is. */
+    private val reserved = ";/?:@&=+\$,#"
+
+    /**
+     * Like JavaScript's decodeURI: decodes `%XX` escapes (UTF-8), except those of reserved characters
+     * (`;/?:@&=+$,#`), and keeps malformed ones as they are.
+     */
     fun decodeUri(s: String): String {
         if (s.indexOf('%') < 0) return s
+        fun at(i: Int): Int =
+            if (i + 2 < s.length && s[i] == '%' && s[i + 1].digitToIntOrNull(16) != null && s[i + 2].digitToIntOrNull(16) != null) {
+                s.substring(i + 1, i + 3).toInt(16)
+            } else {
+                -1
+            }
         val out = StringBuilder()
         var i = 0
         while (i < s.length) {
-            if (s[i] != '%') {
-                out.append(s[i++])
-                continue
+            val b = at(i)
+            if (b >= 0) {
+                val len = when (b) {
+                    in 0x00..0x7F -> 1
+                    in 0xC0..0xDF -> 2
+                    in 0xE0..0xEF -> 3
+                    in 0xF0..0xF7 -> 4
+                    else -> 0
+                }
+                val run = ByteArrayOutputStream()
+                run.write(b)
+                var j = i + 3
+                while (run.size() < len && at(j) >= 0) {
+                    run.write(at(j))
+                    j += 3
+                }
+                val text = if (run.size() == len) {
+                    try {
+                        Charsets.UTF_8.newDecoder()
+                            .onMalformedInput(CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(CodingErrorAction.REPORT)
+                            .decode(ByteBuffer.wrap(run.toByteArray()))
+                            .toString()
+                    } catch (_: CharacterCodingException) {
+                        null
+                    }
+                } else {
+                    null
+                }
+                if (text != null) {
+                    out.append(if (len == 1 && text[0] in reserved) s.substring(i, j) else text)
+                    i = j
+                    continue
+                }
             }
-            val bytes = ByteArrayOutputStream()
-            var j = i
-            while (j + 2 < s.length && s[j] == '%' && s.substring(j + 1, j + 3).toIntOrNull(16) != null) {
-                bytes.write(s.substring(j + 1, j + 3).toInt(16))
-                j += 3
-            }
-            if (j == i) {
-                out.append(s[i++])
-                continue
-            }
-            out.append(String(bytes.toByteArray(), Charsets.UTF_8))
-            i = j
+            out.append(s[i++])
         }
         return out.toString()
     }
@@ -87,7 +123,8 @@ object Hrefs {
     fun resolve(documentFile: String, href: String): Pair<String, String> {
         val hash = href.indexOf('#')
         val file = if (hash >= 0) href.substring(0, hash) else href
-        val id = if (hash >= 0) href.substring(hash + 1) else ""
+        // As href.split('#') in the reference: the id ends at a second #.
+        val id = if (hash >= 0) href.substring(hash + 1).substringBefore('#') else ""
         val path = full(documentFile).parent.resolve(decodeUri(file)).normalize()
         return path.toString() to id
     }
@@ -133,7 +170,13 @@ object SubmachineResolver {
                 continue
             }
             // Outside the project, or written with a different relative path.
-            val (file, id) = Hrefs.resolve(documentFile, href)
+            val (file, id) = try {
+                Hrefs.resolve(documentFile, href)
+            } catch (_: InvalidPathException) {
+                // Not a file path (characters a path can't hold): a machine that can't be found.
+                info[href] = SubmachineInfo(false)
+                continue
+            }
             val s = summaryOf(file)
             info[href] = if (s != null && s.id == id) SubmachineInfo(true, s.name, display(file), s.points) else SubmachineInfo(false)
         }

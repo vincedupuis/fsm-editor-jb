@@ -41,10 +41,11 @@ object Geometry {
     fun clamp(n: Double, min: Double, max: Double): Double = max(min, min(max, n))
 
     /**
-     * Measures text for wrapping a state's internal activities. The estimate by default; the editor's
-     * canvas sets it to the real font metrics. The XMI writer always uses the estimate, so its output
-     * doesn't depend on the font.
+     * Measures text for wrapping a state's internal activities. The estimate by default; the editor
+     * sets it once to the real font metrics, with a function that holds no editor. The XMI writer
+     * always uses the estimate, so its output doesn't depend on the font.
      */
+    @Volatile
     var textMeasure: (String) -> Double = ::estimateLabelWidth
 
     /** The internal activities of a state as drawn: each line wrapped to the width of the state. */

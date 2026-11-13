@@ -4,6 +4,7 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.file.AccessDeniedException
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
 import java.nio.file.NoSuchFileException
 import java.nio.file.Paths
 import java.time.Instant
@@ -845,9 +846,10 @@ class TraceSession {
                 return null
             }
             val file = state.submachine.substringBefore('#')
-            val (subFile, hrefId) = Hrefs.resolve(machine.file, state.submachine)
-            val id = hrefId.ifEmpty { "sm" }
-            val sub = machine(subFile)
+            // Not a file path: a submachine that can't be read.
+            val resolved = try { Hrefs.resolve(machine.file, state.submachine) } catch (_: InvalidPathException) { null }
+            val id = resolved?.second.orEmpty().ifEmpty { "sm" }
+            val sub = resolved?.let { machine(it.first) }
             if (sub == null || sub.model.id.ifEmpty { "sm" } != id) {
                 problem("The submachine of ${machine.model.name}.${state.name.ifEmpty { seg }} ($file) cannot be read ($path).")
                 return null

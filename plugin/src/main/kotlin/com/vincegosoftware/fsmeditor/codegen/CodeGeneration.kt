@@ -121,7 +121,7 @@ object CodeGeneration {
 
             override fun run(indicator: ProgressIndicator) {
                 try {
-                    result = FsmCli.run(cli, args, File(source.parent.path))
+                    result = FsmCli.run(cli, args, File(source.parent.path), indicator)
                 } catch (e: Exception) {
                     failure = e
                 }
@@ -141,6 +141,11 @@ object CodeGeneration {
     }
 
     private fun report(project: Project, console: CodeGenOutput, r: CliResult, output: String, cli: File) {
+        if (r.cancelled) {
+            console.print("  Cancelled.\n", ConsoleViewContentType.SYSTEM_OUTPUT)
+            WindowManager.getInstance().getStatusBar(project)?.info = "Code generation cancelled."
+            return
+        }
         for (line in r.output) console.print("  $line\n", ConsoleViewContentType.NORMAL_OUTPUT)
         for (line in r.errors) {
             val issue = r.issues.firstOrNull { line.contains(":${it.line}: ${it.severity.key}: ${it.message}") }

@@ -107,7 +107,8 @@ class FsmConfigurable : Configurable {
 
     override fun isModified(): Boolean {
         val o = FsmSettings.getInstance().state
-        return cliPath?.text != o.cliPath || generatorPath?.text != o.generatorPath || saveFirst?.isSelected != o.saveBeforeGenerating ||
+        // As stored by apply: trimmed.
+        return (cliPath?.text?.trim() ?: "") != o.cliPath || (generatorPath?.text?.trim() ?: "") != o.generatorPath || saveFirst?.isSelected != o.saveBeforeGenerating ||
             traceFormats?.text != o.traceFormats
     }
 

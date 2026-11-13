@@ -194,10 +194,10 @@ object Validation {
                     if (incoming.isEmpty()) add(v.id, Severity.Error, "A $kind must have at least one incoming transition.")
                     if (outgoing.isEmpty()) add(v.id, Severity.Error, "A $kind must have at least one outgoing transition.")
                     if (outgoing.size > 1) {
-                        if (outgoing.any { it.guard.trim().isEmpty() }) {
+                        if (outgoing.any { JsWhitespace.trim(it.guard).isEmpty() }) {
                             add(v.id, Severity.Warning, "Every branch of a $kind with several outgoing transitions should have a guard.")
                         }
-                        if (outgoing.none { it.guard.trim() == "else" }) {
+                        if (outgoing.none { JsWhitespace.trim(it.guard) == "else" }) {
                             add(v.id, Severity.Info, "Consider an [else] branch so the $kind can always be left.")
                         }
                     }
@@ -279,7 +279,7 @@ object Validation {
                 add(t.id, Severity.Warning, "Pre/postconditions only apply to protocol state machines and are ignored.")
             }
             if (s.type == VertexType.State && g.type == VertexType.State && t.triggers.isEmpty() && t.guard.isEmpty() && s !== g && s.regions.isEmpty()) {
-                if (ix.outgoing(s.id).count { it.kind != TransitionKind.Internal && it.triggers.isEmpty() } > 1) {
+                if (ix.outgoing(s.id).count { it.kind != TransitionKind.Internal && it.triggers.isEmpty() && it.guard.isEmpty() } > 1) {
                     add(t.id, Severity.Warning, "${name(s)} has several completion transitions without triggers or guards.")
                 }
             }
