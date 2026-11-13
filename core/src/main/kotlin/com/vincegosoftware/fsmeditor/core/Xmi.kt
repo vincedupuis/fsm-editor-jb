@@ -44,6 +44,24 @@ object Xmi {
     private val TIME_TRIGGER = Regex("^after\\((.+)\\)$")
     private val UNSAFE = Regex("[^A-Za-z0-9_]")
 
+    /**
+     * Point halfway along the polyline, for transition labels, computed as polylineMid of xmi.ts does (its own
+     * formula and JavaScript's Math.hypot, not [Geometry.polylineMid]), so the file stays byte-identical.
+     */
+    private fun labelMid(pts: List<PointD>): PointD {
+        var total = 0.0
+        for (i in 1 until pts.size) total += Num.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+        var half = total / 2
+        for (i in 1 until pts.size) {
+            val a = pts[i - 1]
+            val b = pts[i]
+            val len = Num.hypot(b.x - a.x, b.y - a.y)
+            if (len >= half && len > 0) return PointD(a.x + (b.x - a.x) * half / len, a.y + (b.y - a.y) * half / len)
+            half -= len
+        }
+        return pts[0]
+    }
+
     // ------------------------------------------------------------------ writing
 
     fun toXmi(source: FsmModel): String {
@@ -159,6 +177,8 @@ object Xmi {
                 .add((transitionsByRegion[r.id] ?: emptyList<Transition>()).map(::transitionNode))
         }
 
+        // States on the way down: a region id used again (a file edited by hand) can make a state its own descendant.
+        val writing = HashSet<Vertex>()
         vertexNode = fun(v: Vertex): XNode {
             if (v.type == VertexType.Final) return XNode("subvertex", "xmi:type" to "uml:FinalState", "xmi:id" to v.id, "name" to v.name)
             if (v.type.isPseudostate) return pointNode("subvertex", v)
@@ -180,7 +200,10 @@ object Xmi {
                     )
                 }
             }
+            // Failing like the VS Code edition (which runs out of stack), instead of overflowing it.
+            if (!writing.add(v)) throw XmiException("State '${v.id}' is inside one of its own regions.")
             for (r in v.regions) node.add(regionNode(r))
+            writing.remove(v)
             if (v.submachine.isNotEmpty()) node.add(XNode("submachine", "href" to v.submachine))
             return node
         }
@@ -274,7 +297,7 @@ object Xmi {
             ).add(pts.map { XNode("waypoint", "xmi:type" to "dc:Point", "x" to Num.r1(it.x), "y" to Num.r1(it.y)) })
             val off = t.labelOffset
             if (off != null) {
-                val mid = Geometry.polylineMid(pts).point
+                val mid = labelMid(pts)
                 val cx = mid.x + off.x
                 val cy = mid.y + off.y
                 edge.add(
@@ -574,10 +597,12 @@ object Xmi {
                     val label = el.children.firstOrNull { typeOf(it) == "umldi:UMLLabel" }
                     val lb = kid(label, "bounds")
                     if (lb != null && pts.size >= 2) {
-                        val mid = Geometry.polylineMid(pts).point
+                        val mid = labelMid(pts)
+                        // A missing or invalid bound gives NaN, which the other editions' JSON turns into 0.
+                        fun offset(n: Double) = if (n.isNaN() || n.isInfinite()) 0.0 else n
                         t.labelOffset = PointD(
-                            Num.r1(Num.parse(lb.attr("x")) + Num.parse(lb.attr("width")) / 2 - mid.x),
-                            Num.r1(Num.parse(lb.attr("y")) + Num.parse(lb.attr("height")) / 2 - mid.y),
+                            offset(Num.r1(Num.parseJs(lb.attr("x")) + Num.parseJs(lb.attr("width")) / 2 - mid.x)),
+                            offset(Num.r1(Num.parseJs(lb.attr("y")) + Num.parseJs(lb.attr("height")) / 2 - mid.y)),
                         )
                     }
                 }

@@ -132,6 +132,28 @@ class TraceTest {
     }
 
     @Test
+    fun acceptsGroupNamesThatJavaScriptAndDotNetAccept() {
+        // Java takes ASCII letters and digits only: the other names get Java ones, backreferences included, but not
+        // in character classes, quotes or lookbehinds.
+        val f = TraceFormats.compile(
+            Json.parse(
+                """{ "name": "Names", "rules": [{ "kind": "enter", "match": "(?<=\\[)(?<my_tag>[a-z]+)\\] (?<${'$'}x>\\w)(?<née>[(?<a_b>]?)\\k<my_tag> \\Q(?<q_q>\\E (?<name>\\w+)=\\k<${'$'}x>\\k<née>" }] }""",
+            ),
+        )
+        assertEquals("Opened", f.parse("[app] Xapp (?<q_q> Opened=X", 0)?.name)
+        assertNull(f.parse("[app] Xweb (?<q_q> Opened=X", 0))
+        assertEquals(
+            "(?<g2>a)(?<g3>b)(?<g4>c)\\k<g2>[(?<x_y>]\\k<g3>(?<g1>d)\\k<g4>",
+            TraceFormats.javaGroupNames("(?<a_b>a)(?<${'$'}x>b)(?<é>c)\\k<a_b>[(?<x_y>]\\k<${'$'}x>(?<g1>d)\\k<é>").first,
+        )
+        // Java's message names the group as written.
+        assertTrue(
+            assertFailsWith<TraceFormatException> { TraceFormats.compile(Json.parse("""{ "name": "X", "rules": [{ "kind": "enter", "match": "(?<a_b>a)(?<a_b>b)" }] }""")) }
+                .message!!.contains("<a_b>"),
+        )
+    }
+
+    @Test
     fun reportsBadFormatsAndPicksTheFormatRecognizingTheMostLines() {
         assertFailsWith<TraceFormatException> { TraceFormats.compile(Json.parse("""{ "name": "X", "rules": [{ "kind": "jump", "match": "a" }] }""")) }
         assertTrue(assertFailsWith<TraceFormatException> { TraceFormats.compile(Json.parse("""{ "name": "X", "rules": [{ "match": "a(" }] }""")) }.message!!.contains("not a valid regular expression"))

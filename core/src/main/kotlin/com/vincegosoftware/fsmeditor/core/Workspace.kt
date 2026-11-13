@@ -31,11 +31,14 @@ class MachineSummary(val id: String, val name: String, val points: List<Connecti
  * XMI href such as `sub/Payment.fsm#sm`, relative to the referencing file.
  */
 object Hrefs {
-    private const val UNRESERVED = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789;,/?:@&=+$-_.!~*'()#"
+    private const val UNRESERVED = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789;,/:@&=+$-_.!~*'()"
 
     private val windows = System.getProperty("os.name", "").startsWith("Windows")
 
-    /** Percent-encodes a relative path the way URI references are written (like JavaScript's encodeURI). */
+    /**
+     * Percent-encodes the file part of an href (encodeHref of the VS Code edition): like JavaScript's encodeURI,
+     * plus `#` and `?`, which would otherwise end the path (a file named `a#b.fsm` is `a%23b.fsm`).
+     */
     fun encodeUri(s: String): String {
         val sb = StringBuilder()
         for (b in s.toByteArray(Charsets.UTF_8)) {
@@ -47,11 +50,12 @@ object Hrefs {
     }
 
     /** Decodes %XX escapes as UTF-8; text that isn't a valid escape is kept as is. */
-    private val reserved = ";/?:@&=+\$,#"
+    private val reserved = ";/:@&=+\$,"
 
     /**
      * Like JavaScript's decodeURI: decodes `%XX` escapes (UTF-8), except those of reserved characters
-     * (`;/?:@&=+$,#`), and keeps malformed ones as they are.
+     * (`;/:@&=+$,`; unlike decodeURI, `%23` and `%3F` give `#` and `?`, as [encodeUri] writes them), and keeps
+     * malformed ones as they are.
      */
     fun decodeUri(s: String): String {
         if (s.indexOf('%') < 0) return s
@@ -107,12 +111,59 @@ object Hrefs {
     private fun full(p: String): Path = Paths.get(p).toAbsolutePath().normalize()
 
     /** Relative path with `/` separators from directory [fromDir] to [to]. */
-    fun relative(fromDir: String, to: String): String {
-        val a = full(fromDir).map { it.toString() }
-        val b = full(to).map { it.toString() }
+    fun relative(fromDir: String, to: String): String = relativeOfFull(full(fromDir).toString(), full(to).toString())
+
+    /**
+     * [relative] of two full paths, computed as the VS Code edition does on the paths of their file URIs: a drive
+     * is the first segment (`d:`, lower case) and a UNC server is not a segment. So a file on another drive is
+     * reached by climbing to the root, `../../e:/models/M.fsm`, which [joinFull] resolves.
+     */
+    fun relativeOfFull(fromDir: String, to: String): String {
+        val from = uriPath(fromDir)
+        val a = from.segments
+        val b = uriPath(to).segments
         var i = 0
-        while (i < a.size && i < b.size && a[i].equals(b[i], ignoreCase = windows)) i++
+        // Windows paths compare without case, as the Visual Studio edition does; others with it.
+        while (i < a.size && i < b.size && a[i].equals(b[i], ignoreCase = from.windows)) i++
         return (List(a.size - i) { ".." } + b.drop(i)).joinToString("/")
+    }
+
+    /**
+     * Full directory [dir] joined with the relative path [relative], as VS Code joins file URI paths: `..` stops
+     * at the root, and a drive segment met there (`../../e:/M.fsm`) starts that drive.
+     */
+    fun joinFull(dir: String, relative: String): String {
+        val (server, segments, windows) = uriPath(dir)
+        for (s in relative.split(*(if (windows) charArrayOf('/', '\\') else charArrayOf('/')))) {
+            if (s.isEmpty() || s == ".") continue
+            if (s == "..") {
+                if (segments.isNotEmpty()) segments.removeAt(segments.size - 1)
+            } else {
+                segments.add(s)
+            }
+        }
+        if (server != null) return "\\\\" + server + "\\" + segments.joinToString("\\")
+        if (segments.isNotEmpty() && isDrive(segments[0])) return segments[0].uppercase() + "\\" + segments.drop(1).joinToString("\\")
+        return if (windows) "\\" + segments.joinToString("\\") else "/" + segments.joinToString("/")
+    }
+
+    private fun isDrive(s: String): Boolean = s.length == 2 && s[1] == ':' && (s[0] in 'A'..'Z' || s[0] in 'a'..'z')
+
+    /** A full path as a file URI path: the UNC server (null for none), and the segments, the first one a lower-case drive. */
+    private data class UriPath(val server: String?, val segments: MutableList<String>, val windows: Boolean)
+
+    private fun uriPath(full: String): UriPath {
+        val unc = full.startsWith("\\\\")
+        val windows = unc || full.length >= 2 && isDrive(full.substring(0, 2))
+        val separators = if (windows) charArrayOf('/', '\\') else charArrayOf('/')
+        val segments = (if (unc) full.substring(2) else full).split(*separators).filter { it.isNotEmpty() }.toMutableList()
+        var server: String? = null
+        if (unc && segments.isNotEmpty()) {
+            server = segments.removeAt(0)
+        } else if (windows && segments.isNotEmpty()) {
+            segments[0] = segments[0].lowercase()
+        }
+        return UriPath(server, segments, windows)
     }
 
     /** href of machine [machineId] in [targetFile], as seen from [documentFile]. */
@@ -125,7 +176,7 @@ object Hrefs {
         val file = if (hash >= 0) href.substring(0, hash) else href
         // As href.split('#') in the reference: the id ends at a second #.
         val id = if (hash >= 0) href.substring(hash + 1).substringBefore('#') else ""
-        val path = full(documentFile).parent.resolve(decodeUri(file)).normalize()
+        val path = full(joinFull(full(documentFile).parent.toString(), decodeUri(file)))
         return path.toString() to id
     }
 

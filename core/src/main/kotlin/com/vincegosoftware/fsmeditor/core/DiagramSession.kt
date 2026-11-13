@@ -704,6 +704,8 @@ class DiagramSession(model: FsmModel) {
     fun fitInRegion(v: Vertex, old: RectD?, exact: Boolean) {
         if (index.isBorderVertex(v)) return
         val s = regionOwnerOf(v.parent) ?: return
+        // A state in its own regions (a region id used twice in a file edited by hand) would grow forever.
+        if (s === v || index.isInside(s, v.id)) return
         val i = s.regions.indexOfFirst { it.id == v.parent }
         val r = rectsOf(s)[i].rect
         fun gap(g: Double) = if (old != null) minOf(FIT_MARGIN, g) else FIT_MARGIN
@@ -1169,6 +1171,8 @@ class DiagramSession(model: FsmModel) {
         var target: RegionRect? = null
         if (at != null) {
             val roots = vertices.filter { it.parent !in map }
+            // Parents that are the ids of copied transitions (crafted clipboard text): no root to place.
+            if (roots.isEmpty()) return
             offX = Geometry.snap(at.x) - roots.minOf { it.x }
             offY = Geometry.snap(at.y) - roots.minOf { it.y }
             target = Geometry.regionAt(index, at, emptySet())
@@ -1193,7 +1197,7 @@ class DiagramSession(model: FsmModel) {
             } else if (index.isBorderVertex(v)) {
                 // Pasted without its state: on that state's border when it still exists.
                 val state = index.vertex(v.parent) ?: continue
-                if (at != null) Geometry.snapToBorder(v, state, v.center)
+                Geometry.snapToBorder(v, state, v.center)
             } else if (at != null && v.type != VertexType.EntryPoint && v.type != VertexType.ExitPoint) {
                 v.parent = target?.id ?: rootRegion
             } else if (at != null || !index.isRegion(v.parent)) {

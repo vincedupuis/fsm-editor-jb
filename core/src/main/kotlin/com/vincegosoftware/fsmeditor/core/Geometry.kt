@@ -107,8 +107,10 @@ object Geometry {
     /** Whether region [id] is region [outer] or lies inside it, at any depth. */
     fun regionWithin(ix: ModelIndex, id: String, outer: String): Boolean {
         if (id == outer) return true
+        // Each state once: a region id used twice (a file edited by hand) can make a state its own ancestor.
+        val seen = HashSet<Vertex>()
         var o = ix.regionOwner[id]
-        while (o != null) {
+        while (o != null && seen.add(o)) {
             if (o.parent == outer) return true
             o = ix.regionOwner[o.parent]
         }

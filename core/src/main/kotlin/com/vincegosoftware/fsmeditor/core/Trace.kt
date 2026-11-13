@@ -186,16 +186,95 @@ object TraceFormats {
         }
     }
 
+    /**
+     * [source] with its group names that JavaScript and .NET accept but Java doesn't (Java takes ASCII letters and
+     * digits only, not `_`, `$` or other letters) replaced by unused Java ones, in its groups `(?<name>…)` and its
+     * backreferences `\k<name>`, outside character classes and `\Q…\E` quotes; and the Java name of each such name.
+     * The groups the formats read (time, machine, id…) are valid Java names, so they keep theirs.
+     */
+    internal fun javaGroupNames(source: String): Pair<String, Map<String, String>> {
+        class Name(val start: Int, val end: Int, val group: Boolean)
+        val names = mutableListOf<Name>()
+        var i = 0
+        var classDepth = 0
+        while (i < source.length) {
+            val c = source[i]
+            when {
+                c == '\\' && source.startsWith("Q", i + 1) -> {
+                    val end = source.indexOf("\\E", i + 2)
+                    i = if (end < 0) source.length else end + 2
+                    continue
+                }
+                c == '\\' && classDepth == 0 && source.startsWith("k<", i + 1) -> {
+                    val end = source.indexOf('>', i + 3)
+                    if (end > 0) names.add(Name(i + 3, end, false))
+                    i += 3
+                    continue
+                }
+                c == '\\' -> i++
+                c == '[' -> {
+                    classDepth++
+                    // As in Java, a ']' first in a class is one of its characters.
+                    i++
+                    if (source.startsWith("^", i)) i++
+                    if (source.startsWith("]", i)) i++
+                    continue
+                }
+                c == ']' && classDepth > 0 -> classDepth--
+                classDepth == 0 && source.startsWith("(?<", i) && !source.startsWith("=", i + 3) && !source.startsWith("!", i + 3) -> {
+                    val end = source.indexOf('>', i + 3)
+                    if (end > 0) names.add(Name(i + 3, end, true))
+                    i += 3
+                    continue
+                }
+            }
+            i++
+        }
+        val groups = names.filter { it.group }.map { source.substring(it.start, it.end) }.toSet()
+        val renamed = LinkedHashMap<String, String>()
+        var next = 1
+        for (name in groups) {
+            if (javaGroupName.matches(name) || !jsGroupName(name)) continue
+            while ("g$next" in groups) next++
+            renamed[name] = "g${next++}"
+        }
+        if (renamed.isEmpty()) return source to renamed
+        val out = StringBuilder()
+        var at = 0
+        for (n in names) {
+            val java = renamed[source.substring(n.start, n.end)] ?: continue
+            out.append(source, at, n.start).append(java)
+            at = n.end
+        }
+        return out.append(source, at, source.length).toString() to renamed
+    }
+
+    private val javaGroupName = Regex("[A-Za-z][A-Za-z0-9]*")
+
+    /** Whether [name] is a group name of JavaScript (an identifier: Unicode letters and digits, `_` and `$`). */
+    private fun jsGroupName(name: String): Boolean {
+        val cps = name.codePoints().toArray()
+        return cps.isNotEmpty() && cps.withIndex().all { (k, cp) ->
+            when {
+                cp == '$'.code || cp == '_'.code -> true
+                k == 0 -> Character.isUnicodeIdentifierStart(cp)
+                else -> cp == 0x200C || cp == 0x200D || (Character.isUnicodeIdentifierPart(cp) && !Character.isIdentifierIgnorable(cp))
+            }
+        }
+    }
+
     /** A format of the setting (a JSON object, parsed), compiled. Throws a [TraceFormatException] for a bad specification. */
     fun compile(spec: Any?): TraceFormat {
         val o = spec as? Map<*, *>
         val name = (o?.get("name") as? String)?.trim()?.ifEmpty { null } ?: "Unnamed format"
         fun regex(source: Any?, what: String): Pattern {
             if (source !is String || source.isEmpty()) throw TraceFormatException("Trace format '$name': $what needs a regular expression.")
+            val (java, renamed) = javaGroupNames(source)
             return try {
-                Pattern.compile(source)
+                Pattern.compile(java)
             } catch (e: PatternSyntaxException) {
-                throw TraceFormatException("Trace format '$name': $what is not a valid regular expression: ${e.description}")
+                val message = renamed.entries.fold(e.description) { m, (original, javaName) -> m.replace("<$javaName>", "<$original>") }
+                throw TraceFormatException("Trace format '$name': $what is not a valid regular expression: $message")
             }
         }
         val list = o?.get("rules") as? List<*>
@@ -574,14 +653,93 @@ class TraceLog internal constructor(
     /** Whether some of its lines name no machine (so the window offers to choose it). */
     val needsMachine: Boolean get() = records.any { it.machine.isEmpty() }
 
+    /** Changes with what was read, so that a [TraceRead] made before is not applied. */
+    internal var version = 0
+
     /** Forgets what was read. */
     internal fun restart() {
+        version++
         records = mutableListOf()
         times = mutableListOf()
         offset = 0
         lines = 0
         instance = null
         instances = LinkedHashMap()
+    }
+}
+
+/**
+ * A read of what was added to a log since the last one: [TraceSession.prepare] makes it, [run] reads and parses the
+ * file on any thread (touching neither the log nor the session), and [TraceSession.apply] adds what it read.
+ */
+class TraceRead internal constructor(
+    val trace: TraceLog,
+    private val version: Int,
+    private val offset: Long,
+    private val lineCount: Int,
+    private val format: TraceFormat,
+    private val formatPicked: Boolean,
+    private val formats: List<TraceFormat>,
+) {
+    internal var restart = false
+    internal var error: String? = null
+    /** Bytes read, up to the last line break; lines read; the format detected; the records; when it was read. */
+    internal var length = 0L
+    internal var lines = 0
+    internal var detected: TraceFormat? = null
+    internal var records: List<TraceRecord> = emptyList()
+    internal var readAt = 0.0
+
+    internal fun current(trace: TraceLog) = trace.version == version
+
+    fun run() {
+        readAt = System.currentTimeMillis().toDouble()
+        var bytes: ByteArray
+        try {
+            val (b, size) = readFrom(trace.path, offset)
+            bytes = b
+            if (size < offset) {
+                // Truncated or replaced (log rotation): read it again.
+                restart = true
+                bytes = readFrom(trace.path, 0).first
+            }
+        } catch (_: NoSuchFileException) {
+            error = "${trace.name} does not exist."
+            return
+        } catch (e: AccessDeniedException) {
+            error = "Cannot read ${trace.name}: access denied."
+            return
+        } catch (e: IOException) {
+            error = "Cannot read ${trace.name}: ${e.message}"
+            return
+        }
+        // Complete lines only: a line break byte never occurs inside a UTF-8 character.
+        val end = bytes.lastIndexOf(10.toByte()) + 1
+        var text = if (end > 0) String(bytes, 0, end, Charsets.UTF_8) else ""
+        if ((restart || offset == 0L) && text.startsWith("\uFEFF")) text = text.substring(1)
+        val split = if (end > 0) text.split('\n') else emptyList()
+        length = end.toLong()
+        lines = max(0, split.size - 1)
+        var f = format
+        if (lines > 0 && !formatPicked) {
+            f = TraceFormats.detect(formats, split.subList(0, min(lines, 1000)))
+            detected = f
+        }
+        val first = if (restart) 0 else lineCount
+        records = (0 until lines).mapNotNull { f.parse(split[it].removeSuffix("\r"), first + it) }
+    }
+
+    private fun readFrom(path: String, offset: Long): Pair<ByteArray, Long> {
+        Files.newByteChannel(Paths.get(path)).use { ch ->
+            val size = ch.size()
+            if (size <= offset) return ByteArray(0) to size
+            ch.position(offset)
+            val buffer = ByteBuffer.allocate((size - offset).toInt())
+            while (buffer.hasRemaining()) {
+                if (ch.read(buffer) <= 0) break
+            }
+            return buffer.array().copyOf(buffer.position()) to size
+        }
     }
 }
 
@@ -715,43 +873,36 @@ class TraceSession {
      */
     fun readNew(trace: TraceLog, now: Double? = null): Boolean {
         if (trace !in traces) return false
-        var bytes: ByteArray
-        try {
-            val (b, size) = readFrom(trace.path, trace.offset)
-            bytes = b
-            if (size < trace.offset) {
-                // Truncated or replaced (log rotation): read it again.
-                trace.restart()
-                bytes = readFrom(trace.path, 0).first
-            }
-        } catch (_: NoSuchFileException) {
-            missing(trace)
-            return true
-        } catch (e: AccessDeniedException) {
-            trace.error = "Cannot read ${trace.name}: access denied."
-            return true
-        } catch (e: IOException) {
-            trace.error = "Cannot read ${trace.name}: ${e.message}"
+        return apply(prepare(trace).also { it.run() }, now)
+    }
+
+    /** A read of what was added to [trace], to [TraceRead.run] on any thread, then to [apply]. */
+    fun prepare(trace: TraceLog) = TraceRead(trace, trace.version, trace.offset, trace.lines, trace.format, trace.formatPicked, formats)
+
+    /**
+     * Adds what [read] read to its log, then rebuilds the timeline, as [readNew]. False when nothing changed, or when
+     * the log was closed or read again from the start since [prepare].
+     */
+    fun apply(read: TraceRead, now: Double? = null): Boolean {
+        val trace = read.trace
+        if (trace !in traces || !read.current(trace)) return false
+        if (read.restart) trace.restart()
+        trace.version++
+        read.error?.let {
+            trace.error = it
             return true
         }
         val hadError = trace.error != null
         trace.error = null
-        // Complete lines only: a line break byte never occurs inside a UTF-8 character.
-        val end = bytes.lastIndexOf(10.toByte()) + 1
-        var text = if (end > 0) String(bytes, 0, end, Charsets.UTF_8) else ""
-        if (trace.offset == 0L && text.startsWith("﻿")) text = text.substring(1)
-        val lines = if (end > 0) text.split('\n') else emptyList()
-        trace.offset += end
-        val count = max(0, lines.size - 1)
-        if (count > 0 && !trace.formatPicked) {
-            trace.format = TraceFormats.detect(formats, lines.subList(0, min(count, 1000)))
+        trace.offset += read.length
+        read.detected?.let {
+            trace.format = it
             trace.formatPicked = true
         }
+        trace.lines += read.lines
         var added = false
-        val stamp = now ?: System.currentTimeMillis().toDouble()
-        for (i in 0 until count) {
-            val raw = lines[i].removeSuffix("\r")
-            val rec = trace.format.parse(raw, trace.lines++) ?: continue
+        val stamp = now ?: read.readAt
+        for (rec in read.records) {
             val prev = trace.times.lastOrNull()
             // Without a time: the previous record's, else (lines appended while followed) the time it was read.
             trace.times.add(rec.time ?: prev ?: if (trace.followed) stamp else 0.0)
@@ -761,19 +912,6 @@ class TraceSession {
         trace.followed = true
         if (added) rebuild()
         return added || hadError
-    }
-
-    private fun readFrom(path: String, offset: Long): Pair<ByteArray, Long> {
-        Files.newByteChannel(Paths.get(path)).use { ch ->
-            val size = ch.size()
-            if (size <= offset) return ByteArray(0) to size
-            ch.position(offset)
-            val buffer = ByteBuffer.allocate((size - offset).toInt())
-            while (buffer.hasRemaining()) {
-                if (ch.read(buffer) <= 0) break
-            }
-            return buffer.array().copyOf(buffer.position()) to size
-        }
     }
 
     /**

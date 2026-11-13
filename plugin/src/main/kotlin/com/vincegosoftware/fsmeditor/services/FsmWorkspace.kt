@@ -7,6 +7,7 @@ import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.roots.ProjectRootManager
@@ -70,7 +71,9 @@ class FsmWorkspace(private val project: Project) : Disposable {
     /** Path shown to the user: relative to the project folder when possible. */
     fun display(path: String): String {
         val base = project.basePath?.trimEnd('/') ?: return path
-        return if (path.startsWith("$base/")) path.substring(base.length + 1) else path
+        // Paths from java.io and java.nio use '\' on Windows; the project's base path uses '/'.
+        val p = path.replace('\\', '/')
+        return if (p.startsWith("$base/")) p.substring(base.length + 1) else path
     }
 
     /** The *.fsm files of the project (skipping excluded and tool folders). Read action. */
@@ -84,6 +87,8 @@ class FsmWorkspace(private val project: Project) : Disposable {
         for (root in roots) {
             VfsUtilCore.visitChildrenRecursively(root, object : VirtualFileVisitor<Unit>() {
                 override fun visitFile(file: VirtualFile): Boolean {
+                    // Lets a write action cancel (and restart) the non-blocking read actions walking a large project.
+                    ProgressManager.checkCanceled()
                     if (output.size >= MAX_FILES) return false
                     if (file.isDirectory) {
                         return file == root || (file.name !in SKIPPED_FOLDERS && !file.name.startsWith(".") && !index.isExcluded(file))
@@ -98,7 +103,8 @@ class FsmWorkspace(private val project: Project) : Disposable {
 
     /** Summary of a machine file, cached by document or file modification stamp. Read action. */
     fun summaryOf(file: VirtualFile): MachineSummary? {
-        if (!file.isValid) return null
+        // An href without a file part (`#sm`) resolves to the document's folder.
+        if (!file.isValid || file.isDirectory) return null
         val document = FileDocumentManager.getInstance().getCachedDocument(file)
         val key = if (document != null) "d${document.modificationStamp}" else "f${file.modificationStamp}:${file.timeStamp}"
         summaries[file.path]?.let { if (it.key == key) return it.summary }

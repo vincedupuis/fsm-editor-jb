@@ -98,6 +98,21 @@ class EditingTest {
     }
 
     @Test
+    fun aBorderPointPastedWithoutItsStateStaysOnTheBorder() {
+        val s = newSession()
+        val a = addState(s, "a", s.rootRegion, 1000.0, 1100.0)
+        val ep = Vertex(id = "ep", type = VertexType.EntryPoint, name = "ep", parent = a.id, x = 993.0, y = 1150.0, w = 14.0, h = 14.0)
+        s.model.vertices.add(ep)
+        s.reindex()
+        s.selection = linkedSetOf(ep.id)
+        // Without a paste position (duplicate, keyboard paste): offset, then back onto the border.
+        s.paste(s.collectSelection())
+        val copy = s.index.vertex(s.selection.single())!!
+        assertEquals(a.id, copy.parent)
+        assertEquals(PointD(1020.0, 1160.0), copy.center)
+    }
+
+    @Test
     fun clipboardJsonRoundTrips() {
         val s = example("Order.fsm")
         s.selection = s.model.vertices.mapTo(LinkedHashSet()) { it.id }
@@ -277,12 +292,42 @@ class EditingTest {
         assertEquals("100%", Hrefs.decodeUri("100%"))
         assertEquals("My Machine.fsm", Hrefs.decodeUri("My%20Machine.fsm"))
         assertEquals("café.fsm", Hrefs.decodeUri("caf%C3%A9.fsm"))
-        assertEquals("a%23b%2Fc", Hrefs.decodeUri("a%23b%2Fc"))
+        assertEquals("a#b%2Fc?", Hrefs.decodeUri("a%23b%2Fc%3F"))
         assertEquals("café%zz", Hrefs.decodeUri("caf%C3%A9%zz"))
         assertEquals("a%E0.fsm", Hrefs.decodeUri("a%E0.fsm"))
         assertEquals("a%E0A.fsm", Hrefs.decodeUri("a%E0%41.fsm"))
         assertEquals("a%C0%80%", Hrefs.decodeUri("a%C0%80%"))
         assertEquals("sm", Hrefs.resolve("/tmp/M.fsm", "a.fsm#sm#x").second)
+    }
+
+    @Test
+    fun hrefsEncodeHashAndQuestionMarkInFileNamesAndDecodeThemBack() {
+        for (path in listOf("sub/a#b?c.fsm", "My Machine.fsm", "café 50%.fsm", "a&b;c.fsm")) {
+            val href = "${Hrefs.encodeUri(path)}#sm"
+            assertEquals(2, href.split('#').size)
+            assertEquals(path, Hrefs.decodeUri(href.split('#')[0]))
+        }
+        assertEquals("a%23b%3F.fsm", Hrefs.encodeUri("a#b?.fsm"))
+    }
+
+    @Test
+    fun hrefsAcrossDrivesAndSharesAreThoseOfVsCode() {
+        // As VS Code's relative() of the file URIs' paths (/d:/models, /e:/sub/Payment.fsm).
+        assertEquals("../../e:/sub/Payment.fsm", Hrefs.relativeOfFull("D:\\models", "E:\\sub\\Payment.fsm"))
+        assertEquals("sub/Payment.fsm", Hrefs.relativeOfFull("D:\\models", "d:\\Models\\sub\\Payment.fsm"))
+        assertEquals("../../../e:/Payment.fsm", Hrefs.relativeOfFull("D:\\a\\b", "E:\\Payment.fsm"))
+        assertEquals("../e:/Payment.fsm", Hrefs.relativeOfFull("D:\\", "E:\\Payment.fsm"))
+        // UNC: the server is the URI's authority, not a path segment.
+        assertEquals("../../other/Payment.fsm", Hrefs.relativeOfFull("\\\\srv\\share\\models", "\\\\srv\\other\\Payment.fsm"))
+        assertEquals("../../share/Payment.fsm", Hrefs.relativeOfFull("D:\\models", "\\\\srv\\share\\Payment.fsm"))
+
+        assertEquals("E:\\sub\\Payment.fsm", Hrefs.joinFull("D:\\models", "../../e:/sub/Payment.fsm"))
+        assertEquals("D:\\models\\sub\\Payment.fsm", Hrefs.joinFull("D:\\models", "sub/Payment.fsm"))
+        assertEquals("D:\\Payment.fsm", Hrefs.joinFull("D:\\models", "../Payment.fsm"))
+        assertEquals("\\\\srv\\other\\Payment.fsm", Hrefs.joinFull("\\\\srv\\share\\models", "../../other/Payment.fsm"))
+        assertEquals("/tmp/Payment.fsm", Hrefs.joinFull("/tmp/models", "../../../tmp/Payment.fsm"))
+        // Other paths keep their case.
+        assertEquals("../Models/sub/Payment.fsm", Hrefs.relativeOfFull("/data/models", "/data/Models/sub/Payment.fsm"))
     }
 
     @Test

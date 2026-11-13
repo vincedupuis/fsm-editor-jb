@@ -1,6 +1,7 @@
 package com.vincegosoftware.fsmeditor.trace
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.Service
@@ -9,6 +10,7 @@ import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -19,6 +21,7 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import com.vincegosoftware.fsmeditor.FsmDocuments
 import com.vincegosoftware.fsmeditor.core.TraceLog
 import com.vincegosoftware.fsmeditor.core.TraceMachine
+import com.vincegosoftware.fsmeditor.core.TraceRead
 import com.vincegosoftware.fsmeditor.core.TraceSession
 import com.vincegosoftware.fsmeditor.core.TraceView
 import com.vincegosoftware.fsmeditor.core.Xmi
@@ -32,7 +35,8 @@ import javax.swing.Timer
  * The Trace Player, as src/trace/player.ts of the VS Code edition: the [TraceSession] of the open logs, each followed
  * as it grows (its size and modification time are checked twice a second); the machines of the project and the open
  * documents for it to resolve records; playing; the highlights it hands to the open diagrams; and the questions it asks
- * (which machine the lines of a log naming none are about). UI thread only.
+ * (which machine the lines of a log naming none are about). UI thread only, but for reading the logs (and the machines),
+ * done in the background and applied to the session on the UI thread.
  */
 @Service(Service.Level.PROJECT)
 class TracePlayerService(private val project: Project) : Disposable {
@@ -41,6 +45,12 @@ class TracePlayerService(private val project: Project) : Disposable {
     private var views: Map<String, TraceView> = emptyMap()
     /** Size and modification time of each log when it was last read. */
     private val stamps = HashMap<TraceLog, Pair<Long, Long>>()
+    /** Logs to read even if their size and time didn't change (opened, or with another format). */
+    private val toRead = LinkedHashSet<TraceLog>()
+    /** The logs are being read in the background. */
+    private var polling = false
+    @Volatile
+    private var disposed = false
     private val follow = Timer(500) { poll() }
     private val playTimer = Timer(0) { tick() }.apply { isRepeats = false }
     private val refreshTimer = Timer(200) { refresh() }.apply { isRepeats = false }
@@ -83,7 +93,8 @@ class TracePlayerService(private val project: Project) : Disposable {
         if (added.isEmpty()) return
         follow.start()
         refresh()
-        for (trace in added) read(trace)
+        toRead.addAll(added)
+        poll()
         update()
     }
 
@@ -91,30 +102,67 @@ class TracePlayerService(private val project: Project) : Disposable {
         ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW)?.show()
     }
 
-    /** Reads the logs that changed on disk. */
+    /** What a poll found of a log: its size and time, and what was read (null when it doesn't exist). */
+    private class Polled(val trace: TraceLog, val stamp: Pair<Long, Long>, val read: TraceRead?)
+
+    /**
+     * Reads, in the background, what was added to the logs that changed on disk and to those of [toRead] (one poll at
+     * a time); then, on the UI thread, adds it to the session and asks for the machine of logs whose lines name none.
+     */
     private fun poll() {
-        var any = false
-        for (trace in session.traces.toList()) {
-            val file = File(trace.path)
-            val stamp = if (file.exists()) file.length() to file.lastModified() else -1L to -1L
-            if (stamps[trace] == stamp) continue
-            if (stamp.first < 0) session.missing(trace) else read(trace)
-            stamps[trace] = stamp
-            any = true
+        if (polling || disposed || session.traces.isEmpty()) return
+        val forced = toRead.toSet()
+        toRead.clear()
+        val known = HashMap(stamps)
+        val reads = session.traces.map { session.prepare(it) }
+        polling = true
+        AppExecutorUtil.getAppExecutorService().execute {
+            var polled = emptyList<Polled>()
+            try {
+                polled = reads.mapNotNull { read ->
+                    if (disposed) return@mapNotNull null
+                    val file = File(read.trace.path)
+                    val stamp = if (file.exists()) file.length() to file.lastModified() else -1L to -1L
+                    val force = read.trace in forced
+                    when {
+                        !force && known[read.trace] == stamp -> null
+                        !force && stamp.first < 0 -> Polled(read.trace, stamp, null)
+                        else -> Polled(read.trace, stamp, read.also { it.run() })
+                    }
+                }
+            } finally {
+                ApplicationManager.getApplication().invokeLater({ applyPolled(polled) }, ModalityState.any()) { disposed }
+            }
         }
-        if (any) update()
     }
 
-    /** Reads what was added to a log, then asks for its machine when its lines name none. */
+    private fun applyPolled(polled: List<Polled>) {
+        polling = false
+        val ask = mutableListOf<TraceLog>()
+        for (p in polled) {
+            if (p.trace !in session.traces) continue
+            stamps[p.trace] = p.stamp
+            if (p.read == null) {
+                session.missing(p.trace)
+            } else {
+                session.apply(p.read)
+                if (session.shouldAsk(p.trace)) ask.add(p.trace)
+            }
+        }
+        if (polled.isNotEmpty()) update()
+        ask.forEach { askMachine(it) }
+        if (toRead.isNotEmpty()) poll()
+    }
+
+    /** Reads a log, whatever its size and time. */
     private fun read(trace: TraceLog) {
-        val file = File(trace.path)
-        stamps[trace] = if (file.exists()) file.length() to file.lastModified() else -1L to -1L
-        session.readNew(trace)
-        if (session.shouldAsk(trace)) askMachine(trace)
+        toRead.add(trace)
+        poll()
     }
 
     fun close(trace: TraceLog) {
         stamps.remove(trace)
+        toRead.remove(trace)
         session.close(trace)
         if (session.traces.isEmpty()) {
             follow.stop()
@@ -240,6 +288,8 @@ class TracePlayerService(private val project: Project) : Disposable {
                 val machine = TraceMachine(File(vf.path).absolutePath, Xmi.fromXmi(document?.text ?: VfsUtilCore.loadText(vf)))
                 parsed[vf.path] = key to machine
                 machine
+            } catch (e: ProcessCanceledException) {
+                throw e
             } catch (_: Exception) {
                 null
             }
@@ -315,6 +365,7 @@ class TracePlayerService(private val project: Project) : Disposable {
     }
 
     override fun dispose() {
+        disposed = true
         follow.stop()
         playTimer.stop()
         refreshTimer.stop()

@@ -142,7 +142,15 @@ class FsmFileEditor(private val project: Project, private val file: VirtualFile)
 
     override fun write(model: FsmModel) {
         val old = document.text
-        val xmi = Xmi.toXmi(model)
+        val xmi = try {
+            Xmi.toXmi(model)
+        } catch (e: XmiException) {
+            panel.toast("The change could not be saved: ${e.message}")
+            // Back to what the document holds.
+            echoText = null
+            scheduleSync()
+            return
+        }
         echoText = xmi
         echoModel = model.copy()
         if (xmi == old) return

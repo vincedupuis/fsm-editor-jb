@@ -35,6 +35,7 @@ import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.Geometry
 import com.vincegosoftware.fsmeditor.core.Hrefs
 import com.vincegosoftware.fsmeditor.core.Issue
+import com.vincegosoftware.fsmeditor.core.JsWhitespace
 import com.vincegosoftware.fsmeditor.core.Labels
 import com.vincegosoftware.fsmeditor.core.MachineInfo
 import com.vincegosoftware.fsmeditor.core.MachineKind
@@ -48,6 +49,7 @@ import com.vincegosoftware.fsmeditor.core.Tools
 import com.vincegosoftware.fsmeditor.core.TraceView
 import com.vincegosoftware.fsmeditor.core.VertexType
 import com.vincegosoftware.fsmeditor.core.Xmi
+import com.vincegosoftware.fsmeditor.core.XmiException
 import com.vincegosoftware.fsmeditor.settings.FsmSettings
 import java.awt.BorderLayout
 import java.awt.Color
@@ -447,7 +449,13 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         }
         val name = host.askSubmachineName(Extraction.proposedName(s.model, ids)) ?: return
         val result = Extraction.extract(s.model, ids, name, Hrefs.encodeUri("$name.fsm") + "#sm")
-        if (!host.createMachineFile(name, Xmi.toXmi(result.machine))) return
+        val xmi = try {
+            Xmi.toXmi(result.machine)
+        } catch (e: XmiException) {
+            toast(e.message ?: "")
+            return
+        }
+        if (!host.createMachineFile(name, xmi)) return
         s.replaceModel(result.parent)
         s.selection = linkedSetOf(result.stateId)
         s.commit()
@@ -643,7 +651,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         val ix = s?.index
         val v = ix?.vertex(edit.id)
         val t = ix?.transition(edit.id)
-        if (s != null && t != null && !edit.cancelled && Labels.transitionLabel(s.model, t) != text.trim()) {
+        if (s != null && t != null && !edit.cancelled && Labels.transitionLabel(s.model, t) != JsWhitespace.trim(text)) {
             val err = Labels.applyLabel(s.model, t.copy(), text, ix.vertex(t.source))
             if (err != null && fromKey) {
                 edit.box.border = BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Theme.current.error), JBUI.Borders.empty(1, 2))
@@ -667,8 +675,8 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             if (v.text == normalized) return true
             v.text = normalized
         } else {
-            if (v.name == text.trim()) return true
-            v.name = text.trim()
+            if (v.name == JsWhitespace.trim(text)) return true
+            v.name = JsWhitespace.trim(text)
         }
         s.commit()
         renderProps()

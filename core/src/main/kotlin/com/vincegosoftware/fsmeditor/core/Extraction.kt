@@ -223,9 +223,16 @@ object Extraction {
         val entryRefFor = HashMap<String, String>()
         // By outer target: the new machine's exit point that outgoing transitions go to.
         val exitFor = HashMap<String, String>()
+        val naming = HashSet<Vertex>()
         fun targetName(v: Vertex?): String {
             if (v == null) return ""
-            if (v.type == VertexType.ConnectionPointRef) return targetName(ix.vertex(v.parent)).ifEmpty { "Point" }
+            if (v.type == VertexType.ConnectionPointRef) {
+                // A reference whose parent id is its own (ids used twice in a file edited by hand) would recurse forever.
+                if (!naming.add(v)) return ""
+                val owner = targetName(ix.vertex(v.parent))
+                naming.remove(v)
+                return owner.ifEmpty { "Point" }
+            }
             return identifier(v.name).ifEmpty { capitalize(typeName(v.type)) }
         }
         for (t in crossing) {

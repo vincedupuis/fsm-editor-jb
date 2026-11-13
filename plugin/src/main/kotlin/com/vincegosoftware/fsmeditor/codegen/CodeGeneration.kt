@@ -135,7 +135,8 @@ object CodeGeneration {
                     Messages.showErrorDialog(project, "Could not run ${cli.path}: $message", "Code Generation Failed")
                     return
                 }
-                report(project, console, r, output, cli)
+                // A relative output folder is relative to the generator's working directory, the machine's folder.
+                report(project, console, r, File(output).let { if (it.isAbsolute) it else File(source.parent.path, output) }.normalize().path, cli)
             }
         }.queue()
     }

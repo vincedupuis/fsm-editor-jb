@@ -4,6 +4,7 @@ import java.math.BigInteger
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.log10
+import kotlin.math.sqrt
 
 /**
  * A read-only XML element whose element and attribute names use canonical
@@ -312,6 +313,29 @@ object Num {
     fun r1(n: Double): Double = floor(n * 10 + 0.5) / 10
 
     /**
+     * JavaScript's `Math.hypot(a, b)` as V8 computes it (scaled by the larger value, with Kahan summation),
+     * which differs from `sqrt(a * a + b * b)` in the last bit for many values.
+     */
+    fun hypot(a: Double, b: Double): Double {
+        val x0 = abs(a)
+        val x1 = abs(b)
+        if (x0.isInfinite() || x1.isInfinite()) return Double.POSITIVE_INFINITY
+        if (x0.isNaN() || x1.isNaN()) return Double.NaN
+        val max = maxOf(x0, x1)
+        if (max == 0.0) return 0.0
+        var sum = 0.0
+        var compensation = 0.0
+        for (x in doubleArrayOf(x0, x1)) {
+            val r = x / max
+            val summand = r * r - compensation
+            val preliminary = sum + summand
+            compensation = preliminary - sum - summand
+            sum = preliminary
+        }
+        return sqrt(sum) * max
+    }
+
+    /**
      * The text JavaScript's `String(n)` gives: the shortest digits that read back as [n],
      * `60`, `12.5`, `1e-7`, `1.5e+21`; `-0` gives `0`. NaN and infinities give `0`.
      * Computed exactly, so it doesn't depend on the JDK's own formatting.
@@ -389,11 +413,53 @@ object Num {
         return if (k == 1) d + tail else d.substring(0, 1) + "." + d.substring(1) + tail
     }
 
-    private val NUMBER = Regex("^[+-]?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
+    /** A decimal literal: digits with an optional point and exponent (not the other forms the JVM would accept). */
+    private val DECIMAL = Regex("^(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
 
-    /** Parses a number of an XMI attribute (invalid gives 0). */
+    /**
+     * Parses a number like JavaScript's `+s || 0` does for XMI attributes (missing or invalid gives 0), infinite
+     * ones giving 0 too, as they do once the other editions' JSON has made them null.
+     */
     fun parse(s: String?): Double {
+        val d = parseJs(s)
+        return if (d.isNaN() || d.isInfinite()) 0.0 else d
+    }
+
+    /**
+     * JavaScript's unary plus (`+s`): the number in [s] once trimmed, 0 when that is empty,
+     * NaN when [s] is null (a missing attribute) or isn't a number.
+     */
+    fun parseJs(s: String?): Double {
+        if (s == null) return Double.NaN
         val t = JsWhitespace.trim(s)
-        return if (NUMBER.matches(t)) t.toDouble() else 0.0
+        if (t.isEmpty()) return 0.0
+        if (t.length > 2 && t[0] == '0') {
+            val radix = when (t[1]) {
+                'x', 'X' -> 16
+                'o', 'O' -> 8
+                'b', 'B' -> 2
+                else -> 0
+            }
+            if (radix > 0) {
+                var n = 0.0
+                for (i in 2 until t.length) {
+                    val c = t[i]
+                    val digit = when (c) {
+                        in '0'..'9' -> c - '0'
+                        in 'a'..'z' -> c - 'a' + 10
+                        in 'A'..'Z' -> c - 'A' + 10
+                        else -> 99
+                    }
+                    if (digit >= radix) return Double.NaN
+                    n = n * radix + digit
+                }
+                return n
+            }
+        }
+        val body = if (t[0] == '+' || t[0] == '-') t.substring(1) else t
+        if (body == "Infinity") return if (t[0] == '-') Double.NEGATIVE_INFINITY else Double.POSITIVE_INFINITY
+        if (!DECIMAL.matches(body)) return Double.NaN
+        // Numbers too large for a double read as infinite, as in JavaScript.
+        return t.toDouble()
     }
 }

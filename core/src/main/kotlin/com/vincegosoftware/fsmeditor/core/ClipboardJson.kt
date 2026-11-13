@@ -163,6 +163,7 @@ object Json {
 
     private class Reader(private val s: String) {
         private var i = 0
+        private var depth = 0
 
         fun readDocument(): Any? {
             val v = value()
@@ -188,8 +189,13 @@ object Json {
 
         private fun value(): Any? {
             val c = peek()
-            if (c == '{') return obj()
-            if (c == '[') return array()
+            if (c == '{' || c == '[') {
+                // Any text can be on the clipboard: deep nesting must not overflow the stack.
+                if (++depth > 256) throw FormatException("Too deeply nested.")
+                val nested = if (c == '{') obj() else array()
+                depth--
+                return nested
+            }
             if (c == '"') return string()
             if (word("true")) return true
             if (word("false")) return false

@@ -1004,12 +1004,16 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         var index = 0
         var atSource = false
         var offset0 = PointD(0.0, 0.0)
+        /** Label: whether the transition had a label offset at the start. */
+        var had = false
         var additive = false
         var base: Set<String> = emptySet()
         /** A right-button pan, which opens the context menu when the pointer doesn't move. */
         var rightButton = false
         /** Move, resize and region drags: the layout at the start, restored at each step. */
         var snapshot: DiagramSession.LayoutSnapshot? = null
+        /** Resize, region and bend point drags: the layout before the drag changed anything, restored by Esc. */
+        var undo: DiagramSession.LayoutSnapshot? = null
         /** Move: the boxes of the roots at the start. */
         var boxes: Map<String, RectD> = emptyMap()
     }
@@ -1078,9 +1082,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 return
             }
 
-            // A composite state moves by its title bar: its regions are empty canvas, for a selection band.
-            if (hit.kind == HitKind.Vertex && Geo.regionRects(s.model, s.index.vertex(hit.id)!!).any { it.rect.contains(p) }) hit = Hit(HitKind.Empty)
-
+            hit = inRegionAsEmpty(s, hit, p)
             when (hit.kind) {
                 HitKind.Handle -> {
                     val v = if (hit.handle == "sep") null else s.index.vertex(s.selection.first())
@@ -1090,6 +1092,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                             it.vertex = st
                             it.index = hit.index
                             it.start = p
+                            it.undo = s.snapshot()
                             it.snapshot = s.beginLayoutDrag(st)
                         }
                     } else if (v != null) {
@@ -1102,6 +1105,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                                 it.y0 = v.y
                                 it.w0 = v.w
                                 it.h0 = v.h
+                                it.undo = s.snapshot()
                                 it.snapshot = s.beginLayoutDrag(v)
                             }
                         } else {
@@ -1112,6 +1116,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 HitKind.Waypoint -> drag = DragState(DragKind.Waypoint).also {
                     it.transition = s.index.transition(hit.id)
                     it.index = hit.index
+                    it.undo = s.snapshot()
                 }
                 HitKind.End -> drag = DragState(DragKind.Reconnect).also {
                     it.transition = s.index.transition(hit.id)
@@ -1125,6 +1130,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                         it.transition = t
                         it.start = p
                         it.offset0 = t.labelOffset ?: PointD(0.0, 0.0)
+                        it.had = t.labelOffset != null
                     }
                     editor.renderProps()
                 }
@@ -1369,10 +1375,35 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         }
     }
 
+    /**
+     * A composite state moves by its title bar: its regions are empty canvas, for a selection band and for a
+     * double-click adding a state.
+     */
+    private fun inRegionAsEmpty(s: DiagramSession, hit: Hit, p: PointD): Hit =
+        if (hit.kind == HitKind.Vertex && Geo.regionRects(s.model, s.index.vertex(hit.id)!!).any { it.rect.contains(p) }) Hit(HitKind.Empty) else hit
+
+    /** Ends the drag without committing it: what it changed goes back to how it was when it started. */
+    private fun cancelDrag(s: DiagramSession) {
+        val d = drag ?: return
+        drag = null
+        cursor = if (tool != null) Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR) else null
+        (d.undo ?: d.snapshot)?.let { s.restore(it) }
+        when (d.kind) {
+            DragKind.Label -> d.transition!!.labelOffset = if (d.had) d.offset0 else null
+            DragKind.Pan -> setView(d.viewX0, d.viewY0, zoom)
+            DragKind.Band -> {
+                s.selection = LinkedHashSet(d.base)
+                editor.renderProps()
+            }
+            else -> {}
+        }
+    }
+
     /** Double-click actions; false when the target has none. */
     private fun doubleClick(s: DiagramSession, p: PointD, e: MouseEvent): Boolean {
         s.reindex()
-        val hit = hitTest(s, p)
+        // Inside a composite state's region: a new state in that region (its title bar still edits its name).
+        val hit = inRegionAsEmpty(s, hitTest(s, p), p)
         when (hit.kind) {
             HitKind.Waypoint -> s.removeWaypoint(s.index.transition(hit.id)!!, hit.index)
             HitKind.Label -> editor.startInlineEdit(hit.id)
@@ -1451,8 +1482,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
                 KeyEvent.VK_ESCAPE -> {
                     if (drag != null) {
-                        drag?.snapshot?.let { s.restore(it) }
-                        drag = null
+                        cancelDrag(s)
                         repaint()
                     } else if (tool != null) {
                         setTool(null)

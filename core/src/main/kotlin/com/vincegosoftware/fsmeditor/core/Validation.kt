@@ -32,9 +32,10 @@ object Validation {
             return if (!n.isNullOrEmpty()) "'$n'" else "'$href'"
         }
 
-        // Identity
+        // Identity (a region id used again can also put a state inside its own region)
+        val allRegions = model.regions + model.vertices.flatMap { it.regions }
         val seen = HashSet<String>()
-        for (id in model.vertices.map { it.id } + model.transitions.map { it.id }) {
+        for (id in model.vertices.map { it.id } + model.transitions.map { it.id } + allRegions.map { it.id }) {
             if (!seen.add(id)) add(id, Severity.Error, "Duplicate id '$id'.")
         }
 
@@ -64,7 +65,6 @@ object Validation {
         }
 
         // Regions
-        val allRegions = model.regions + model.vertices.flatMap { it.regions }
         for (r in allRegions) {
             val kids = ix.childrenOf(r.id)
             fun count(t: VertexType) = kids.filter { it.type == t }
@@ -392,22 +392,25 @@ object Validation {
     }
 
     private fun checkReachability(model: FsmModel, ix: ModelIndex, add: (String, Severity, String) -> Unit) {
-        val rootInitial = ix.initialOf(if (model.regions.isNotEmpty()) model.regions[0].id else "")
+        // Every top-level region is entered when the machine starts.
+        val rootInitials = model.regions.map { ix.initialOf(it.id) }
         // The machine can also be entered through its own entry points (from a referencing submachine state).
         val machineEntries = model.vertices.filter { v -> v.type == VertexType.EntryPoint && model.regions.any { it.id == v.parent } }
-        if (rootInitial == null && machineEntries.isEmpty()) {
-            if (model.vertices.any { it.type == VertexType.State }) {
-                add("", Severity.Warning, "The top-level region has no initial pseudostate.")
+        if (machineEntries.isEmpty()) {
+            model.regions.forEachIndexed { i, r ->
+                if (rootInitials[i] == null && ix.childrenOf(r.id).any { it.type == VertexType.State }) {
+                    add("", Severity.Warning, "The top-level region has no initial pseudostate.")
+                }
             }
-            return
         }
+        if (rootInitials.all { it == null } && machineEntries.isEmpty()) return
         val reached = HashSet<String>()
         val queue = ArrayDeque<Vertex>()
         fun visit(v: Vertex?) {
             if (v == null || !reached.add(v.id)) return
             queue.addLast(v)
         }
-        visit(rootInitial)
+        rootInitials.forEach(::visit)
         machineEntries.forEach(::visit)
         while (queue.isNotEmpty()) {
             val v = queue.removeFirst()

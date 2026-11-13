@@ -109,6 +109,15 @@ class FsmEditorTest : BasePlatformTestCase() {
         assertTrue(errors.toString(), errors.any { it.startsWith("The referenced state machine 'Missing.fsm#") })
     }
 
+    fun testOpeningAnHrefThatIsNoFileFails() {
+        val file = myFixture.addFileToProject("Order.fsm", File(examples, "Order.fsm").readText()).virtualFile
+        // A NUL character no path can hold, and an href without a file part (the folder).
+        assertFalse(FsmDocuments.openHref(project, file, "Pay%00ment.fsm#sm"))
+        val local = File(examples, "Order.fsm").absoluteFile
+        val localFile = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByIoFile(local)!!
+        assertFalse(FsmDocuments.openHref(project, localFile, "#sm"))
+    }
+
     fun testValidMachinesHaveNoErrorsInTheText() {
         myFixture.configureByText("MediaPlayer.fsm", File(examples, "MediaPlayer.fsm").readText())
         assertEmpty(myFixture.doHighlighting(HighlightSeverity.WARNING).map { it.description })
@@ -206,8 +215,8 @@ class FsmEditorTest : BasePlatformTestCase() {
         }
         player.open(listOf(log.path))
         val s = player.session
-        // The machines are read in the background.
-        waitFor { s.machines.isNotEmpty() && s.problems.isEmpty() }
+        // The machines and the log are read in the background.
+        waitFor { s.machines.isNotEmpty() && s.problems.isEmpty() && s.entries.isNotEmpty() }
         assertEquals(153, s.entries.size)
         assertEquals(emptyList<String>(), s.problems)
         push()

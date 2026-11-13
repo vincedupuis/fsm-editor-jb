@@ -205,4 +205,44 @@ class ValidationTest {
         b.t(c2, "B", guard = "else")
         assertEquals(emptyList(), cycles(b))
     }
+
+    @Test
+    fun reportsARegionIdUsedAgainOnTheRegionId() {
+        val b = machine()
+        val s = b.state("S", regions = 1)
+        b.state("T", "S_r0")
+        b.model.vertices.first { it.id == s }.regions[0].id = "r_root"
+        val u = b.state("U", regions = 1)
+        b.model.vertices.first { it.id == u }.regions[0].id = "A"
+        val dup = Validation.validate(b.model).filter { it.message.startsWith("Duplicate id") }.map { "${it.id}|${it.severity.key}|${it.message}" }
+        assertEquals(listOf("r_root|error|Duplicate id 'r_root'.", "A|error|Duplicate id 'A'."), dup)
+    }
+
+    @Test
+    fun entersTheInitialOfEveryTopLevelRegionAndWarnsAboutEachOneWithout() {
+        val b = ModelBuilder("M")
+        b.model.regions.addAll(listOf(Region("r2"), Region("r3"), Region("r4")))
+        b.state("A")
+        b.init("A")
+        b.state("B", "r2")
+        b.init("B", "r2")
+        b.state("C", "r3")
+        b.vertex(VertexType.Final, "r4")
+        assertEquals(
+            listOf("|warning|The top-level region has no initial pseudostate.", "C|warning|State 'C' can never be entered."),
+            Validation.validate(b.model).map { "${it.id}|${it.severity.key}|${it.message}" },
+        )
+    }
+
+    @Test
+    fun warnsOncePerTopLevelRegionWithStatesButNoInitialPseudostate() {
+        val b = ModelBuilder("M")
+        b.model.regions.add(Region("r2"))
+        b.state("A")
+        b.state("B", "r2")
+        assertEquals(
+            listOf("The top-level region has no initial pseudostate.", "The top-level region has no initial pseudostate."),
+            Validation.validate(b.model).map { it.message },
+        )
+    }
 }

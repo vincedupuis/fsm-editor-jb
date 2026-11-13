@@ -19,6 +19,7 @@ import com.vincegosoftware.fsmeditor.core.ConnectionPointInfo
 import com.vincegosoftware.fsmeditor.core.DiagramSession
 import com.vincegosoftware.fsmeditor.core.ElementColors
 import com.vincegosoftware.fsmeditor.core.Expressions
+import com.vincegosoftware.fsmeditor.core.JsWhitespace
 import com.vincegosoftware.fsmeditor.core.Labels
 import com.vincegosoftware.fsmeditor.core.MachineKind
 import com.vincegosoftware.fsmeditor.core.PointKind
@@ -544,7 +545,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                     }))
                 }
             }
-            else -> put(textField("Name", v.name, { v.name = it.trim(); commit() }))
+            else -> put(textField("Name", v.name, { v.name = JsWhitespace.trim(it); commit() }))
         }
         val what = if (v.type == VertexType.Comment) "the comment" else v.name.ifEmpty { "the element" }
         if (v.type == VertexType.State && v.regions.isNotEmpty()) {
@@ -601,8 +602,8 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                 val tb = input(region.name, placeholder = "Region ${i + 1}")
                 var committed = region.name
                 onCommit(tb, false) {
-                    if (tb.text.trim() == committed) return@onCommit
-                    region.name = tb.text.trim()
+                    if (JsWhitespace.trim(tb.text) == committed) return@onCommit
+                    region.name = JsWhitespace.trim(tb.text)
                     committed = region.name
                     commit()
                 }
@@ -682,7 +683,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             }
             if (why.isNotEmpty()) put(muted(why))
             put(
-                textField("Referenced point id", v.ref, { v.ref = it.trim(); commit() }),
+                textField("Referenced point id", v.ref, { v.ref = JsWhitespace.trim(it); commit() }),
                 selectField("Direction", kindText(v.pointKind), listOf("entry" to "Entry point", "exit" to "Exit point")) {
                     v.pointKind = if (it == "exit") PointKind.Exit else PointKind.Entry
                     commit(true)

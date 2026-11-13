@@ -2,7 +2,9 @@ package com.vincegosoftware.fsmeditor.core
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -191,5 +193,34 @@ class LayoutTest {
         val json = ClipboardJson.write(s.collectSelection()!!)
         assertTrue("{\"id\":\"r1\",\"name\":\"\",\"size\":100}" in json)
         assertEquals(100.0, ClipboardJson.tryRead(json)!!.vertices.single { it.id == "P" }.regions[0].size)
+    }
+
+    @Test
+    fun deeplyNestedClipboardTextIsNotElements() {
+        val deep = "[".repeat(100000) + "]".repeat(100000)
+        assertNull(ClipboardJson.tryRead("{\"fsmClipboard\":1,\"vertices\":$deep}"))
+        // Crafted: the only vertex's parent is the id of a copied transition, so no copied vertex is a root.
+        val s = nested()
+        val count = s.model.vertices.size
+        val data = ClipboardJson.tryRead(
+            "{\"fsmClipboard\":1,\"vertices\":[{\"id\":\"a\",\"type\":\"state\",\"parent\":\"t\"}]," +
+                "\"transitions\":[{\"id\":\"t\",\"source\":\"a\",\"target\":\"a\"}]}",
+        )
+        s.paste(data, PointD(10.0, 10.0))
+        assertEquals(count, s.model.vertices.size)
+    }
+
+    @Test
+    fun aStateInItsOwnRegionNeitherGrowsForeverNorOverflowsTheWriter() {
+        // A file edited by hand: state S reuses the id of the top-level region for its own region.
+        val m = FsmModel()
+        m.id = "sm"
+        m.name = "T"
+        m.regions.add(Region("r0"))
+        m.vertices.add(state("S", "r0", 50.0, 50.0, 200.0, 100.0, "r0"))
+        m.vertices.add(state("A", "r0", 60.0, 90.0))
+        val s = DiagramSession(m)
+        assertNotNull(s.createVertex("state", PointD(500.0, 500.0)))
+        assertFailsWith<XmiException> { Xmi.toXmi(s.model) }
     }
 }
