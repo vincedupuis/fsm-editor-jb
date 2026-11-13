@@ -84,7 +84,12 @@ object TraceFormats {
 
     /** An ISO 8601 date and time, or a time of day, as loggers print them. */
     private val isoTime = Pattern.compile("""\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?|\b\d{2}:\d{2}:\d{2}(?:[.,]\d+)?""")
-    private val builtInLine = Pattern.compile("""(?:^|\s)fsm\s+(\S+)\s+(event|enter|exit|transition)\s+(\S+)(?:\s+(.*?))?\s*$""")
+    // JavaScript's \s, \S and . spelled out (see JsWhitespace: Java's \s is ASCII only, and its . also stops at U+0085),
+    // and \z for its $.
+    internal const val WS = JsWhitespace.CLASS
+    internal val NON_WS = "[^" + JsWhitespace.CLASS.substring(1)
+    internal const val ANY = "[^\\n\\r\\u2028\\u2029]"
+    private val builtInLine = Pattern.compile("(?:^|$WS)fsm$WS+($NON_WS+)$WS+(event|enter|exit|transition)$WS+($NON_WS+)(?:$WS+($ANY*?))?$WS*\\z")
     private val number = Regex("""^\d+(\.\d+)?$""")
     private val timeOfDay = Regex("""^(\d{2}):(\d{2}):(\d{2})(?:[.,](\d+))?$""")
     private val compactOffset = Regex("""([+-]\d{2})(\d{2})$""")
@@ -387,7 +392,7 @@ object TraceReplay {
     private val nonIdent = Regex("[^A-Za-z0-9_]+")
     private val edgeUnderscores = Regex("^_+|_+$")
     private val pathSeparators = Regex("""::|\.|/""")
-    private val way = Regex("""^\s*(.+?)\s*->\s*(.+?)(?:\s+\(.*\))?\s*$""")
+    private val way = Regex("^${TraceFormats.WS}*(${TraceFormats.ANY}+?)${TraceFormats.WS}*->${TraceFormats.WS}*(${TraceFormats.ANY}+?)(?:${TraceFormats.WS}+\\(${TraceFormats.ANY}*\\))?${TraceFormats.WS}*\\z")
 
     /** Identifier form of a name, as the code generator makes it (letters, digits, `_`). */
     internal fun ident(text: String): String {

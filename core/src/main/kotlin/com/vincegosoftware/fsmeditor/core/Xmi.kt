@@ -42,7 +42,13 @@ object Xmi {
     private const val LABEL_H = 16.0
 
     private val TIME_TRIGGER = Regex("^after\\((.+)\\)$")
-    private val UNSAFE = Regex("[^A-Za-z0-9_]")
+
+    /**
+     * [s] with every UTF-16 unit other than ASCII letters, digits and `_` replaced by `_`, as JavaScript's
+     * `replace(/[^A-Za-z0-9_]/g, '_')` does (a Java regex would replace a surrogate pair, such as an emoji, by one `_`).
+     */
+    private fun safeId(s: String): String =
+        String(CharArray(s.length) { i -> s[i].let { if (it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '_') it else '_' } })
 
     /**
      * Point halfway along the polyline, for transition labels, computed as polylineMid of xmi.ts does (its own
@@ -79,7 +85,7 @@ object Xmi {
         fun eventFor(trigger: String): String {
             events[trigger]?.let { return it }
             val time = TIME_TRIGGER.find(trigger)
-            var safe = UNSAFE.replace(trigger, "_")
+            var safe = safeId(trigger)
             // after(1s) and an event named after_1s_ would share an id: the later one gets another _.
             val taken = events.values.toHashSet()
             while ("ev_$safe" in taken) safe += "_"
@@ -581,7 +587,7 @@ object Xmi {
                 val b = kid(el, "bounds")
                 val t = transitions[target]
                 if (type == "umldi:UMLShape" && b != null) {
-                    val box = RectD(Num.parse(b.attr("x")), Num.parse(b.attr("y")), Num.parse(b.attr("width")), Num.parse(b.attr("height")))
+                    val box = RectD(bound(b.attr("x")), bound(b.attr("y")), bound(b.attr("width")), bound(b.attr("height")))
                     val v = byId[target]
                     if (v != null) {
                         v.x = box.x
@@ -616,10 +622,11 @@ object Xmi {
                     v.regionLayout = if (abs(b.x - a.x) > abs(b.y - a.y)) RegionLayout.Horizontal else RegionLayout.Vertical
                 }
             }
-            // Each region's own size, along the layout.
+            // Each region's own size, along the layout (an infinite one, none, as the other editions' JSON makes it).
             for (r in v.regions) {
                 val box = regionShapes[r.id] ?: continue
-                r.size = if (v.regionLayout == RegionLayout.Horizontal) box.w else box.h
+                val size = if (v.regionLayout == RegionLayout.Horizontal) box.w else box.h
+                r.size = if (size.isInfinite()) null else size
             }
         }
 
@@ -636,7 +643,20 @@ object Xmi {
                 v.y = 40.0 + slot / 5 * 120
                 slot++
             }
+            // Infinite bounds count as sizes above, then become 0 as the other editions' JSON makes them.
+            v.x = finite(v.x)
+            v.y = finite(v.y)
+            v.w = finite(v.w)
+            v.h = finite(v.h)
         }
         return model.normalize()
     }
+
+    /** A bound of a shape as JavaScript's `+s || 0` reads it: missing or invalid gives 0, infinite stays infinite. */
+    private fun bound(s: String?): Double {
+        val d = Num.parseJs(s)
+        return if (d.isNaN()) 0.0 else d
+    }
+
+    private fun finite(n: Double) = if (n.isInfinite()) 0.0 else n
 }

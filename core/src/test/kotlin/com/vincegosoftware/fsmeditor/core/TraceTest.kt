@@ -100,6 +100,14 @@ class TraceTest {
         assertEquals("Cart -> Payment (checkout)", TraceFormats.builtIn.parse("fsm Order transition t1 Cart -> Payment (checkout)", 0)!!.name)
         assertNull(TraceFormats.builtIn.parse("fsm Order enter", 0))
         assertNull(TraceFormats.builtIn.parse("the fsm Order is ready", 0))
+        // White space as format.ts's \s sees it: U+00A0 and U+3000 separate the fields, U+0085 doesn't.
+        val nbsp = TraceFormats.builtIn.parse("INFO fsm　Order enter s1 Idle ", 0)!!
+        assertEquals("Order|s1|Idle", "${nbsp.machine}|${nbsp.id}|${nbsp.name}")
+        assertEquals("Idle\u0085x", TraceFormats.builtIn.parse("fsm Order enter s1 Idle\u0085x", 0)!!.name)
+        val m = FsmModel.createDefault("M")
+        m.vertices.add(Vertex("v_b", VertexType.State, "Busy", "r_root"))
+        m.transitions.add(Transition("t_go", "v_idle", "v_b"))
+        assertEquals(listOf("t_go"), TraceReplay.findTransitions(ModelIndex(m), "", "Idle ->　Busy (go)").map { it.id })
     }
 
     @Test

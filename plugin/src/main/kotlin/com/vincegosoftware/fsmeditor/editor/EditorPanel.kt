@@ -450,7 +450,10 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         val name = host.askSubmachineName(Extraction.proposedName(s.model, ids)) ?: return
         val result = Extraction.extract(s.model, ids, name, Hrefs.encodeUri("$name.fsm") + "#sm")
         val xmi = try {
-            Xmi.toXmi(result.machine)
+            Xmi.toXmi(result.machine).also {
+                // The edited machine must be writable too, before the new file is created (as in the VS Code edition).
+                Xmi.toXmi(result.parent)
+            }
         } catch (e: XmiException) {
             toast(e.message ?: "")
             return

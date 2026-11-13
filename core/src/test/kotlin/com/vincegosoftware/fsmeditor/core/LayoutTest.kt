@@ -223,4 +223,12 @@ class LayoutTest {
         assertNotNull(s.createVertex("state", PointD(500.0, 500.0)))
         assertFailsWith<XmiException> { Xmi.toXmi(s.model) }
     }
+
+    @Test
+    fun wrappingDropsOneCarriageReturnPerLineAsTheOtherEditions() {
+        // replace(/\r$/, '') in the other editions: a second \r stays, and counts in the width.
+        assertEquals(listOf("a b", "c"), Geometry.commentLines("a b\r\nc", 100.0))
+        assertEquals(listOf("x()\r", "y()"), Geometry.commentLines("x()\r\r\ny()", 100.0))
+        assertEquals(listOf("entry /", "x()\r", "y()"), Geometry.commentLines("entry / x()\r\r\ny()", 74.0))
+    }
 }

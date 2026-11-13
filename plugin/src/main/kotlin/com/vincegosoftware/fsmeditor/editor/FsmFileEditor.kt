@@ -127,6 +127,12 @@ class FsmFileEditor(private val project: Project, private val file: VirtualFile)
             .expireWith(this)
             .finishOnUiThread(ModalityState.any()) { r ->
                 if (gen != generation) return@finishOnUiThread // a newer sync is on its way
+                // The document changed meanwhile (a diagram edit written during validation): showing this older text
+                // would take the diagram back to it, and make the edit look like a change from outside. It syncs again.
+                if (document.text != text) {
+                    scheduleSync()
+                    return@finishOnUiThread
+                }
                 if (!echo) {
                     // The diagram now shows this text: a later change back to the last text written,
                     // such as a redo after an undo, is not our own edit.

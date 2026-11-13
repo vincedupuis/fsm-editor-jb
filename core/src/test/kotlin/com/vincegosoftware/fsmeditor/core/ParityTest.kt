@@ -84,6 +84,26 @@ class ParityTest {
     }
 
     @Test
+    fun eventIdsReplaceEachUtf16UnitAsTheOtherEditions() {
+        // xmi.ts replaces each UTF-16 unit with /[^A-Za-z0-9_]/g: an emoji (a surrogate pair) gives two _.
+        val model = FsmModel.createDefault("M")
+        model.transitions.add(Transition("t1", "v_idle", "v_idle").apply { triggers.add("go😀") })
+        val xmi = Xmi.toXmi(model)
+        assertTrue("event=\"ev_go__\"" in xmi)
+        assertTrue("signal=\"sig_go__\"" in xmi)
+    }
+
+    @Test
+    fun infiniteShapeBoundsCountAsSizesThenReadAsZero() {
+        // +"1e400" || 0 is Infinity in xmi.ts, so the state keeps its width instead of getting the default size;
+        // the JSON the other editions then go through makes the infinite height 0.
+        val xmi = Xmi.toXmi(FsmModel.createDefault("M"))
+            .replace("x=\"160\" y=\"60\" width=\"140\" height=\"60\"", "x=\"160\" y=\"60\" width=\"100\" height=\"1e400\"")
+        val idle = Xmi.fromXmi(xmi).vertices.single { it.id == "v_idle" }
+        assertEquals(100.0 to 0.0, idle.w to idle.h)
+    }
+
+    @Test
     fun labelBoundsUseTheArithmeticOfTheOtherEditions() {
         // Halfway between (170, 130) and (43.3, 70), xmi.ts computes x = 106.64999999999999 (Math.hypot), so the
         // label 123.5 to its right, 100 wide, starts at 180.1, not 180.2.

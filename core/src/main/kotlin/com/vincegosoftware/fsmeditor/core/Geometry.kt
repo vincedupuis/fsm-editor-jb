@@ -361,7 +361,8 @@ object Geometry {
         val lines = mutableListOf<String>()
         for (para in text.split('\n')) {
             var line = ""
-            for (word in para.trimEnd('\r').split(' ')) {
+            // One \r, as replace(/\r$/, '') does in the other editions.
+            for (word in para.removeSuffix("\r").split(' ')) {
                 val candidate = if (line.isNotEmpty()) "$line $word" else word
                 if (line.isEmpty() || measure(candidate) <= width) {
                     line = candidate

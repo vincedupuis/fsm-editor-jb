@@ -255,7 +255,12 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         val error = errorLabel()
         var committed = tb.text
         onCommit(tb, multiline) {
-            if (tb.text == committed) return@onCommit
+            if (tb.text == committed) {
+                // Back to the applied text after a refused one: no longer marked.
+                markInvalid(tb, false)
+                error.isVisible = false
+                return@onCommit
+            }
             val r = check(tb.text)
             if (!r.ok) {
                 markInvalid(tb, true)
@@ -631,7 +636,12 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             val tb = input(Labels.transitionLabel(s.model, t))
             var committed = tb.text
             onCommit(tb, false) {
-                if (tb.text == committed) return@onCommit
+                if (tb.text == committed) {
+                    // Back to the applied label after a refused one: no longer marked.
+                    markInvalid(tb, false)
+                    tb.toolTipText = null
+                    return@onCommit
+                }
                 val err = Labels.applyLabel(s.model, t.copy(), tb.text, v)
                 markInvalid(tb, err != null)
                 tb.toolTipText = err

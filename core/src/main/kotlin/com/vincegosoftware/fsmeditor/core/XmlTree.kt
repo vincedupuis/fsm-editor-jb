@@ -56,7 +56,9 @@ object XmlTree {
      * any name the diagram editors may write.
      */
     fun parse(text: String, canonical: Map<String, String>): XmlElem =
-        resolve(Reader(text).document(), emptyMap(), canonical)
+        // Line ends as XML 1.0 (2.11) has them read: \r\n and a lone \r become \n (a &#13; reference still gives \r).
+        // Kept, a file with CRLF line ends would gain a \r in multi-line text on each save.
+        resolve(Reader(text.replace("\r\n", "\n").replace('\r', '\n')).document(), emptyMap(), canonical)
 
     private class Raw(val line: Int) {
         var qname = ""

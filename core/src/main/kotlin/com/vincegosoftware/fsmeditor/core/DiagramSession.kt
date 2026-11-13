@@ -425,7 +425,8 @@ class DiagramSession(model: FsmModel) {
         val source = t.source
         t.source = t.target
         t.target = source
-        t.points.reverse()
+        // A self-transition loop's bend points are its corners, in drawing order: reversed, they would reshape it.
+        if (!Geometry.isLoop(index, t)) t.points.reverse()
         commit()
     }
 
