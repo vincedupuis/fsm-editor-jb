@@ -36,7 +36,7 @@ The bundled program is a standalone executable (no Node.js needed), in the `cli/
 fsm "models/**/*.fsm" --template ts --out src/generated
 ```
 
-Exit codes: `0` success, `1` errors in the machines or the template, `2` bad usage. Problems are printed as `file:line: severity: message`, which build logs and CI understand. To generate code on every Gradle build:
+Exit codes: `0` success, `1` errors in the machines or the template (with `--check`, also files missing or out of date), `2` bad usage. Problems are printed as `file:line: severity: message`, which build logs and CI understand. With `--check`, `fsm` writes nothing and reports the generated files that are missing, or out of date because their `.fsm` file's model hash has changed since ([details](https://github.com/vincedupuis/fsm-editor-vscode/blob/main/docs/CODEGEN.md#from-the-command-line)). To generate code on every Gradle build:
 
 ```kotlin
 val generateStateMachines by tasks.registering(Exec::class) {

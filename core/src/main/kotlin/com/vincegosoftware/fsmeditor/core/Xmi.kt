@@ -1,5 +1,8 @@
 package com.vincegosoftware.fsmeditor.core
 
+import java.nio.CharBuffer
+import java.nio.charset.CodingErrorAction
+import java.security.MessageDigest
 import kotlin.math.abs
 
 class XmiException(message: String) : Exception(message)
@@ -20,6 +23,10 @@ class XmiException(message: String) : Exception(message)
  *   vertex or transition (UML DI has no color), then a
  *   <group id="g" members="id id …"/> per group of vertices (members in file
  *   order, groups in the order of their first member).
+ *
+ * The file ends with the model hash, in its own xmi:Extension:
+ * <modelHash value="…"/>, the first 16 hex digits of the SHA-256 of the
+ * document without its layout (see [modelHash]).
  *
  * `toXmi(fromXmi(x))` round-trips without loss (coordinates are rounded to 0.1 px),
  * and the output is identical to the one of FSM Editor for VS Code.
@@ -354,7 +361,44 @@ object Xmi {
         )
         if (stereoNames.isNotEmpty()) root.attrs.add("xmlns:$PROFILE_NAME" to PROFILE_NS)
         root.add(XNode("uml:Model", "xmi:id" to smId + "_model", "name" to m.name).add(profileApplication, packaged), diagram, applications)
+        root.add(XNode("xmi:Extension", "extender" to EXTENDER).add(XNode("modelHash", "value" to modelHash(XmlTree.write(root)))))
         return XmlTree.write(root)
+    }
+
+    // ------------------------------------------------------------------ model hash
+
+    /**
+     * Hash of the state machine model in a file ([text]): the first 16 hex digits of the SHA-256 of the
+     * UTF-8 canonical form of its document element, leaving out the layout. The canonical form writes
+     * each element as `<name a="v" …>text children</name>`, with
+     * - names under the canonical prefixes (as [XmlTree.parse] gives them), attributes sorted by name
+     *   (UTF-16 order), without the namespace declarations;
+     * - the element's own text, left out when it is only XML white space (space, tab, CR, LF);
+     * - `&`, `<`, `>` and `"` written as `&amp;`, `&lt;`, `&gt;` and `&quot;` in values and text;
+     * - no UML DI elements (the diagram) and no FSM Editor xmi:Extension (colors, groups, the hash itself).
+     * Throws [XmlParseException] when the text isn't XML.
+     */
+    fun modelHash(text: String): String {
+        fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+        val sb = StringBuilder()
+        fun write(el: XmlElem) {
+            if (el.ns == NS_UMLDI || (el.name == "xmi:Extension" && el.attr("extender") == EXTENDER)) return
+            sb.append('<').append(el.name)
+            for (k in el.attrs.keys.sorted()) sb.append(' ').append(k).append("=\"").append(esc(el.attrs.getValue(k))).append('"')
+            sb.append('>')
+            if (el.text.any { it != ' ' && it != '\t' && it != '\r' && it != '\n' }) sb.append(esc(el.text))
+            for (c in el.children) write(c)
+            sb.append("</").append(el.name).append('>')
+        }
+        write(XmlTree.parse(text, CANONICAL))
+        // UTF-8 with U+FFFD for a lone surrogate, as JavaScript's TextEncoder (String.toByteArray would write '?').
+        val encoder = Charsets.UTF_8.newEncoder()
+            .onMalformedInput(CodingErrorAction.REPLACE)
+            .onUnmappableCharacter(CodingErrorAction.REPLACE)
+            .replaceWith(byteArrayOf(0xEF.toByte(), 0xBF.toByte(), 0xBD.toByte()))
+        val buffer = encoder.encode(CharBuffer.wrap(sb))
+        val bytes = ByteArray(buffer.remaining()).also { buffer.get(it) }
+        return MessageDigest.getInstance("SHA-256").digest(bytes).take(8).joinToString("") { "%02x".format(it) }
     }
 
     // ------------------------------------------------------------------ reading
