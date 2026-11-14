@@ -56,23 +56,17 @@ intellijPlatform {
     }
 }
 
-// The fsm code generator copied by scripts/fetch-cli.* (gitignored) ships in the plugin's cli/ folder, and
-// fsm-generator (Jinja templates, unpacked from its GitHub Releases into plugin/generator/<platform>, gitignored)
-// in its generator/ folder.
+// The fsm code generator of fsm-cli with its templates, in plugin/cli/<platform> (copied by scripts/fetch-cli.sh,
+// or unpacked from fsm-cli's release archives by the release workflow; gitignored), ships in the plugin's cli/ folder.
 val cliDir = rootProject.layout.projectDirectory.dir("plugin/cli")
-val generatorDir = rootProject.layout.projectDirectory.dir("plugin/generator")
 tasks.named<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>("prepareSandbox") {
     from(cliDir) {
         into(intellijPlatform.projectName.map { "$it/cli" })
-    }
-    from(generatorDir) {
-        into(intellijPlatform.projectName.map { "$it/generator" })
     }
 }
 
 tasks.test {
     systemProperty("fsm.examples", rootProject.file("examples").absolutePath)
     systemProperty("fsm.cli", cliDir.asFile.absolutePath)
-    systemProperty("fsm.generator", generatorDir.asFile.absolutePath)
     systemProperty("fsm.screenshots", layout.buildDirectory.dir("screenshots").get().asFile.absolutePath)
 }

@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Copies the `fsm` code generation CLI, with its templates, into plugin/cli/<platform>/
-# so the plugin bundles it (plugin/cli is gitignored).
+# Copies the `fsm` code generator, with its templates, into plugin/cli/<platform>/
+# so the plugin bundles it (plugin/cli is gitignored). <platform> is darwin-arm64,
+# darwin-x64, linux-arm64, linux-x64 or windows-x64.
 #
-# The CLI is the one of FSM Editor for VS Code (github.com/vincedupuis/fsm-editor-vscode),
-# built there with `npm run build:bin`. By default it is taken from a sibling clone:
-#   ../fsm-editor-vscode/dist/fsm-<version>-<platform>/
-# where <platform> is darwin-arm64, darwin-x64, linux-arm64, linux-x64 or windows-x64.
+# fsm is the program of fsm-cli (github.com/vincedupuis/fsm-cli). It is taken from:
+#   - a clone of fsm-cli (by default the sibling ../fsm-cli): its target/release/fsm
+#     (under $CARGO_TARGET_DIR when set) and templates/, for this machine's platform;
+#   - or a folder of unpacked fsm-cli release archives, fsm-<version>-<platform>/
+#     each holding fsm (fsm.exe on Windows) and templates/: the newest version found.
 #
-# Usage: scripts/fetch-cli.sh [--all] [--build] [path to fsm-editor-vscode]
+# Usage: scripts/fetch-cli.sh [--all] [--build] [path to a clone of fsm-cli, or to a folder of release archives]
 #   (default)  only the platform of this machine
-#   --all      every platform found in dist/ (a plugin for all systems, ~400 MB)
-#   --build    runs `npm run build:bin` there first (with --all: every target, else `-- --target current`)
+#   --all      every platform of the release archives (a plugin for all systems)
+#   --build    runs `cargo build --release` in the clone first
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 all=false
 build=false
-src="$here/../fsm-editor-vscode"
+src="$here/../fsm-cli"
 for arg in "$@"; do
   case "$arg" in
     --all) all=true ;;
@@ -35,31 +37,49 @@ case "$(uname -m)" in
   *) arch=x64 ;;
 esac
 host="$os-$arch"
+exe_of() { if [ "${1%%-*}" = windows ]; then echo fsm.exe; else echo fsm; fi; }
 
-if $build; then
-  if $all; then (cd "$src" && npm run build:bin); else (cd "$src" && npm run build:bin -- --target current); fi
+out="$here/plugin/cli"
+if [ -f "$src/Cargo.toml" ]; then
+  # A clone of fsm-cli: this machine's build.
+  if $all; then
+    echo "--all needs a folder of unpacked fsm-<version>-<platform> release archives, not a clone of fsm-cli." >&2
+    exit 2
+  fi
+  if $build; then
+    cargo="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
+    (cd "$src" && "$cargo" build --release --locked)
+  fi
+  exe="${CARGO_TARGET_DIR:-$src/target}/release/$(exe_of "$host")"
+  if [ ! -f "$exe" ]; then
+    echo "No $exe. Build fsm-cli there with: cargo build --release, or run this script with --build." >&2
+    exit 1
+  fi
+  rm -rf "$out"
+  mkdir -p "$out/$host"
+  cp "$exe" "$out/$host/"
+  cp -R "$src/templates" "$out/$host/templates"
+  echo "Copied $exe and its templates to plugin/cli/$host"
+  exit 0
 fi
 
-# The newest version in dist/.
-version="$(ls -d "$src"/dist/fsm-*-* 2>/dev/null | sed -E 's|.*/fsm-([0-9][0-9.]*)-.*|\1|' | sort -V | tail -1 || true)"
+# Release archives: the newest version in the folder.
+version="$(ls -d "$src"/fsm-*-*/ 2>/dev/null | sed -E 's|.*/fsm-([0-9][0-9.]*)-.*|\1|' | sort -V | tail -1 || true)"
 if [ -z "$version" ]; then
-  echo "No fsm build found under $src/dist. Build it there with: npm run build:bin, or run this script with --build." >&2
+  echo "No fsm-cli clone or unpacked fsm-<version>-<platform> release archive found in $src. Download them from https://github.com/vincedupuis/fsm-cli/releases." >&2
   exit 1
 fi
 if $all; then
-  platforms="$(ls -d "$src"/dist/fsm-"$version"-* | sed -E "s|.*/fsm-$version-||")"
+  platforms="$(ls -d "$src"/fsm-"$version"-*/ | sed -E "s|.*/fsm-$version-||; s|/$||")"
 else
   platforms="$host"
 fi
-
-out="$here/plugin/cli"
 rm -rf "$out"
 for p in $platforms; do
-  dist="$src/dist/fsm-$version-$p"
-  exe=fsm
-  [ "${p%%-*}" = windows ] && exe=fsm.exe
+  dist="$src/fsm-$version-$p"
+  exe="$(exe_of "$p")"
   if [ ! -f "$dist/$exe" ]; then
-    echo "No $exe in $dist. Build it with: npm run build:bin -- --target bun-$p" >&2
+    echo "No $exe in $dist." >&2
     exit 1
   fi
   mkdir -p "$out/$p"

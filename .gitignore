@@ -4,8 +4,6 @@ build/
 .idea/
 *.iml
 out/
-# Copied by scripts/fetch-cli.sh (the fsm code generator, 60-100 MB per platform)
+# Copied by scripts/fetch-cli.sh (the fsm code generator from fsm-cli, ~3 MB per platform)
 plugin/cli/
-# fsm-generator, unpacked from its GitHub Releases (Jinja templates, ~3 MB per platform)
-plugin/generator/
 .intellijPlatform/

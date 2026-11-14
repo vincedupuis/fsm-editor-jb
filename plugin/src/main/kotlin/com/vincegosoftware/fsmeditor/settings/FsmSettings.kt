@@ -23,8 +23,6 @@ class FsmSettings : PersistentStateComponent<FsmSettings.Options> {
     class Options {
         /** Path of the fsm code generator; empty to use the bundled one, or else one on the PATH. */
         var cliPath: String = ""
-        /** Path of fsm-generator, which runs Jinja templates; empty to use the bundled one, or else one on the PATH. */
-        var generatorPath: String = ""
         /** The generator reads the files on disk: save open state machines first. */
         var saveBeforeGenerating: Boolean = true
         /** Formats of the logs the Trace Player reads, besides its built-in format: a JSON array (see [com.vincegosoftware.fsmeditor.core.TraceFormats]). */
@@ -53,7 +51,6 @@ class FsmSettings : PersistentStateComponent<FsmSettings.Options> {
 
 class FsmConfigurable : Configurable {
     private var cliPath: TextFieldWithBrowseButton? = null
-    private var generatorPath: TextFieldWithBrowseButton? = null
     private var saveFirst: JBCheckBox? = null
     private var traceFormats: JBTextArea? = null
 
@@ -64,27 +61,16 @@ class FsmConfigurable : Configurable {
         path.addActionListener {
             FileChooser.chooseFile(FileChooserDescriptor(true, false, false, false, false, false), null, null) { path.text = it.path }
         }
-        val generator = TextFieldWithBrowseButton()
-        generator.addActionListener {
-            FileChooser.chooseFile(FileChooserDescriptor(true, false, false, false, false, false), null, null) { generator.text = it.path }
-        }
         val save = JBCheckBox("Save .fsm documents before generating code")
         val formats = JBTextArea(8, 60).apply { font = com.intellij.util.ui.JBFont.create(java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12)) }
         cliPath = path
-        generatorPath = generator
         saveFirst = save
         traceFormats = formats
         return FormBuilder.createFormBuilder()
             .addLabeledComponent("fsm executable:", path)
             .addComponentToRightColumn(
                 com.intellij.ui.components.JBLabel(
-                    "<html>Path of the fsm code generator. Leave empty to use the one bundled with the plugin, or else an fsm found on the PATH.</html>",
-                ).apply { foreground = UIUtil.getContextHelpForeground() },
-            )
-            .addLabeledComponent("fsm-generator executable:", generator)
-            .addComponentToRightColumn(
-                com.intellij.ui.components.JBLabel(
-                    "<html>Path of fsm-generator, the code generator that runs Jinja templates (.jinja). Leave empty to use the one bundled with the plugin, or else an fsm-generator found on the PATH.</html>",
+                    "<html>Path of the fsm code generator (from github.com/vincedupuis/fsm-cli). Leave empty to use the one bundled with the plugin, or else an fsm found on the PATH.</html>",
                 ).apply { foreground = UIUtil.getContextHelpForeground() },
             )
             .addComponent(save)
@@ -108,14 +94,13 @@ class FsmConfigurable : Configurable {
     override fun isModified(): Boolean {
         val o = FsmSettings.getInstance().state
         // As stored by apply: trimmed.
-        return (cliPath?.text?.trim() ?: "") != o.cliPath || (generatorPath?.text?.trim() ?: "") != o.generatorPath || saveFirst?.isSelected != o.saveBeforeGenerating ||
+        return (cliPath?.text?.trim() ?: "") != o.cliPath || saveFirst?.isSelected != o.saveBeforeGenerating ||
             traceFormats?.text != o.traceFormats
     }
 
     override fun apply() {
         val o = FsmSettings.getInstance().state
         o.cliPath = cliPath?.text?.trim() ?: ""
-        o.generatorPath = generatorPath?.text?.trim() ?: ""
         o.saveBeforeGenerating = saveFirst?.isSelected ?: true
         val formatsChanged = o.traceFormats != (traceFormats?.text ?: "")
         o.traceFormats = traceFormats?.text ?: ""
@@ -129,14 +114,12 @@ class FsmConfigurable : Configurable {
     override fun reset() {
         val o = FsmSettings.getInstance().state
         cliPath?.text = o.cliPath
-        generatorPath?.text = o.generatorPath
         saveFirst?.isSelected = o.saveBeforeGenerating
         traceFormats?.text = o.traceFormats
     }
 
     override fun disposeUIResources() {
         cliPath = null
-        generatorPath = null
         saveFirst = null
         traceFormats = null
     }

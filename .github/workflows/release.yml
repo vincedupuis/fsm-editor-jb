@@ -1,4 +1,4 @@
-# On a version tag (v0.3.0), builds the plugin with the `fsm` code generator of
+# On a version tag (v0.3.0), builds the plugin with the `fsm` code generator (fsm-cli) of
 # every platform, attaches it to the GitHub Release of that tag, and publishes it
 # to the JetBrains Marketplace when the JETBRAINS_MARKETPLACE_TOKEN secret is set
 # (a token from plugins.jetbrains.com > My Tokens).
@@ -9,10 +9,8 @@ on:
     tags: ['v*']
 
 env:
-  # Release of FSM Editor for VS Code whose `fsm` code generator the plugin bundles.
-  FSM_CLI_VERSION: 0.4.6
-  # Release of fsm-generator (github.com/vincedupuis/fsm-generator), which runs the Jinja templates, the plugin bundles.
-  FSM_GENERATOR_VERSION: 0.6.2
+  # Release of fsm-cli (github.com/vincedupuis/fsm-cli) whose `fsm` code generator the plugin bundles.
+  FSM_CLI_VERSION: 0.6.3
 
 jobs:
   release:
@@ -43,11 +41,11 @@ jobs:
         with:
           cache-provider: basic
 
-      - name: Fetch the fsm code generators
+      - name: Fetch the fsm code generator
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "v$FSM_CLI_VERSION" -R vincedupuis/fsm-editor-vscode -p "fsm-$FSM_CLI_VERSION-*" -D "$RUNNER_TEMP/fsm"
+          gh release download "v$FSM_CLI_VERSION" -R vincedupuis/fsm-cli -p "fsm-$FSM_CLI_VERSION-*" -D "$RUNNER_TEMP/fsm"
           for archive in "$RUNNER_TEMP"/fsm/*; do
             case "$archive" in
               *.zip) unzip -q "$archive" -d "$RUNNER_TEMP/fsm" ;;
@@ -60,24 +58,6 @@ jobs:
             cp -R "$dir" "plugin/cli/$platform"
           done
           ls plugin/cli
-
-      - name: Fetch fsm-generator
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download "v$FSM_GENERATOR_VERSION" -R vincedupuis/fsm-generator -p "fsm-generator-$FSM_GENERATOR_VERSION-*" -D "$RUNNER_TEMP/generator"
-          for archive in "$RUNNER_TEMP"/generator/*; do
-            case "$archive" in
-              *.zip) unzip -q "$archive" -d "$RUNNER_TEMP/generator" ;;
-              *.tar.gz) tar xzf "$archive" -C "$RUNNER_TEMP/generator" ;;
-            esac
-          done
-          for dir in "$RUNNER_TEMP"/generator/fsm-generator-$FSM_GENERATOR_VERSION-*/; do
-            platform=$(basename "$dir" | sed "s/^fsm-generator-$FSM_GENERATOR_VERSION-//")
-            mkdir -p plugin/generator
-            cp -R "$dir" "plugin/generator/$platform"
-          done
-          ls plugin/generator
 
       - name: Test
         run: ./gradlew :core:test :plugin:test

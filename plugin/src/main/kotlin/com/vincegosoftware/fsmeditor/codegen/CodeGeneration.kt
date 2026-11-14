@@ -38,22 +38,14 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 /**
- * Generates code for a machine with the `fsm` CLI, or fsm-generator for a Jinja template: asks for a
- * template and a folder, runs it, reports the results.
+ * Generates code for a machine with `fsm write`: asks for a template and a folder, runs it, reports the results.
  */
 object CodeGeneration {
     private const val OUT_KEY = "fsmEditor.codegen.out."
 
-    /**
-     * Templates offered for a machine: the generators' own, then the template files of the project
-     * (*.hbs when fsm was found, *.jinja when fsm-generator was).
-     */
-    private fun templateChoices(project: Project, cli: File?, generator: File?): List<TemplateChoice> {
-        val choices = (
-            FsmCli.bundledTemplates(cli).map { TemplateChoice(it.path, it.nameWithoutExtension, "bundled Handlebars template") } +
-                FsmCli.bundledTemplates(generator, "jinja").map { TemplateChoice(it.path, it.nameWithoutExtension, "bundled Jinja template (fsm-generator)") }
-            ).toMutableList()
-        val extensions = listOfNotNull(cli?.let { "hbs" }, generator?.let { "jinja" })
+    /** Templates offered for a machine: fsm's own, then the *.jinja files of the project. */
+    private fun templateChoices(project: Project, cli: File): List<TemplateChoice> {
+        val choices = FsmCli.bundledTemplates(cli).map { TemplateChoice(it.path, it.nameWithoutExtension, "bundled template") }.toMutableList()
         val workspace = FsmWorkspace.getInstance(project)
         val found = ApplicationManager.getApplication().runReadAction(Computable {
             val output = ArrayList<VirtualFile>()
@@ -62,7 +54,7 @@ object CodeGeneration {
                 override fun visitFile(file: VirtualFile): Boolean {
                     if (output.size >= 50) return false
                     if (file.isDirectory) return file == base || (!file.name.startsWith(".") && file.name !in setOf("node_modules", "build", "out", "bin", "obj", "dist"))
-                    if (file.extension in extensions) output.add(file)
+                    if (file.extension == "jinja") output.add(file)
                     return true
                 }
             })
@@ -78,39 +70,30 @@ object CodeGeneration {
             return
         }
         val settings = FsmSettings.getInstance().state
-        val fsm = FsmCli.locate(settings.cliPath)
-        val generator = FsmCli.locateGenerator(settings.generatorPath)
-        fun notFound(jinja: Boolean) = Messages.showErrorDialog(
-            project,
-            when {
-                jinja && settings.generatorPath.isBlank() ->
-                    "fsm-generator, which runs Jinja templates, was not found. Set its path in Settings › Tools › FSM Editor, or put fsm-generator on the PATH."
-                jinja -> "The fsm-generator '${settings.generatorPath}' configured in Settings › Tools › FSM Editor does not exist."
-                settings.cliPath.isBlank() -> "The fsm code generator was not found. Set its path in Settings › Tools › FSM Editor, or put fsm on the PATH."
-                else -> "The fsm code generator '${settings.cliPath}' configured in Settings › Tools › FSM Editor does not exist."
-            },
-            "Generate Code",
-        )
-        if (fsm == null && generator == null) {
-            notFound(false)
+        val cli = FsmCli.locate(settings.cliPath)
+        if (cli == null) {
+            Messages.showErrorDialog(
+                project,
+                if (settings.cliPath.isBlank()) "The fsm code generator was not found. Set its path in Settings › Tools › FSM Editor, or put fsm on the PATH."
+                else "The fsm code generator '${settings.cliPath}' configured in Settings › Tools › FSM Editor does not exist.",
+                "Generate Code",
+            )
             return
         }
         val properties = PropertiesComponent.getInstance(project)
         val outKey = OUT_KEY + source.path
         val lastOut = properties.getValue(outKey) ?: source.parent.path
-        val dialog = GenerateCodeDialog(project, source.nameWithoutExtension, templateChoices(project, fsm, generator), settings.lastTemplate, lastOut)
+        val dialog = GenerateCodeDialog(project, source.nameWithoutExtension, templateChoices(project, cli), settings.lastTemplate, lastOut)
         if (!dialog.showAndGet()) return
         val (template, output) = dialog.result
         settings.lastTemplate = template
         properties.setValue(outKey, output)
-        val jinja = FsmCli.isJinja(template)
-        val cli = (if (jinja) generator else fsm) ?: return notFound(jinja)
 
         if (settings.saveBeforeGenerating) {
             val documents = FileDocumentManager.getInstance()
             documents.unsavedDocuments.filter { FsmDocuments.isFsm(documents.getFile(it)) }.forEach { documents.saveDocument(it) }
         }
-        val args = listOf(source.path, "--template", template, "--out", output)
+        val args = FsmCli.writeArgs(source.path, template, output)
         val console = CodeGenOutput.getInstance(project)
         console.print("${LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))} ${FsmCli.commandLine(cli, args)}\n", ConsoleViewContentType.SYSTEM_OUTPUT)
         WindowManager.getInstance().getStatusBar(project)?.info = "Generating code for ${source.name}..."
@@ -176,11 +159,10 @@ object CodeGeneration {
         }
         WindowManager.getInstance().getStatusBar(project)?.info = "Code generation failed."
         console.show()
-        val reason = when {
-            r.exitCode == 2 -> "The generator was called with bad arguments."
-            r.issues.any { it.severity == Severity.Error } -> "The state machine has errors (see FSM Code Generation)."
-            else -> r.errors.lastOrNull() ?: "${cli.nameWithoutExtension} exited with code ${r.exitCode}."
-        }
+        // fsm's own message says why, also for bad usage (exit 2), such as a template it refuses.
+        val reason = if (r.issues.any { it.severity == Severity.Error }) "The state machine has errors (see FSM Code Generation)."
+        else r.message ?: if (r.exitCode == 2) "The generator was called with bad arguments."
+        else r.errors.lastOrNull() ?: "${cli.nameWithoutExtension} exited with code ${r.exitCode}."
         Messages.showErrorDialog(project, "$reason Details are in the FSM Code Generation tool window.", "Code Generation Failed")
     }
 }
