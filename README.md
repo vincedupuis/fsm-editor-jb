@@ -8,10 +8,10 @@ This is the JetBrains edition of [FSM Editor for VS Code](https://github.com/vin
 
 ## Code generation
 
-*Generate Code...* turns a machine into source code with a [Handlebars](https://handlebarsjs.com/) template, running the `fsm` command-line generator of FSM Editor, or with a [Jinja](https://jinja.palletsprojects.com/) template, running [fsm-generator](https://github.com/vincedupuis/fsm-generator), the same generator in Rust. The plugin bundles both. One template can write several files per machine. Two templates are bundled in both languages, TypeScript (`ts`) and C++17 for [Boost.SML](https://github.com/boost-ext/sml) (`sml`), and any `*.hbs` or `*.jinja` template of your project can be used. The same generator runs from a terminal or a build:
+*Generate Code...* turns a machine into source code with a [Jinja](https://jinja.palletsprojects.com/) template, running `fsm`, the command-line generator of FSM Editor ([fsm-cli](https://github.com/vincedupuis/fsm-cli)), which the plugin bundles. One template can write several files per machine. Two templates are bundled, TypeScript (`ts`) and C++17 for [Boost.SML](https://github.com/boost-ext/sml) (`sml`), and any `*.jinja` template of your project can be used. The same generator runs from a terminal or a build:
 
 ```sh
-fsm "models/**/*.fsm" --template ts --out src/generated
+fsm write "models/**/*.fsm" --template ts --out src/generated
 ```
 
 See **[docs/CODEGEN.md](docs/CODEGEN.md)** for the dialog, builds, and where templates and the code model are documented.
@@ -83,14 +83,15 @@ Actions (**Tools › FSM Editor**, and the context menus of `.fsm` files in the 
 
 ## Development
 
-Requirements: JDK 17 or later to run Gradle (a JDK 21 toolchain is downloaded when missing).
+Requirements: JDK 17 or later to run Gradle (a JDK 21 toolchain is downloaded when missing); [Rust](https://rustup.rs/) to build `fsm` from a clone of fsm-cli, or else archives from the [fsm-cli releases](https://github.com/vincedupuis/fsm-cli/releases).
 
 ```sh
 ./gradlew :core:test         # model, file format, validation and editing tests (parity with VS Code)
 ./gradlew :plugin:test       # the plugin in a headless IDE; paints the editor into plugin/build/screenshots
 ./gradlew :plugin:runIde     # starts IntelliJ IDEA with the plugin: open examples/MediaPlayer.fsm, or Order.fsm (uses Payment.fsm)
-scripts/fetch-cli.sh         # copies the fsm generator of this machine's platform from ../fsm-editor-vscode/dist into plugin/cli
-                             # (--all: every platform found there; --build: builds it there first with npm run build:bin)
+scripts/fetch-cli.sh         # copies the fsm generator of this machine's platform from a clone of fsm-cli (../fsm-cli) into plugin/cli
+                             # (--build: builds it there first with cargo; given a folder of unpacked fsm-cli release archives
+                             # instead, --all takes every platform found there)
 ./gradlew :plugin:buildPlugin      # plugin/build/distributions/fsm-editor-<version>.zip, with plugin/cli when present
 ./gradlew :plugin:verifyPlugin     # JetBrains Plugin Verifier against 2024.3 (-PverifyIde=<path to an IDE> adds another)
 ```
@@ -109,5 +110,5 @@ Install the ZIP with Settings › Plugins › ⚙ › *Install Plugin from Disk.
   - `trace/`: the Trace Player tool window and the service following the logs
   - `Actions.kt`, `settings/`: actions and Settings › Tools › FSM Editor
 - `core/src/test/`: tests, including parity tests against reference results of the VS Code extension (`resources/fixtures/`)
-- `scripts/fetch-cli.sh`: copies the code generator into the plugin; fsm-generator goes in `plugin/generator/<platform>/`, unpacked from its GitHub Releases
+- `scripts/fetch-cli.sh`: copies the code generator into the plugin
 - `docs/`: UML conformance and code generation

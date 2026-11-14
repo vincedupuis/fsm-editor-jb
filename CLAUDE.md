@@ -1,6 +1,6 @@
 # FSM Editor for JetBrains IDEs
 
-IntelliJ Platform plugin (2024.3+, all JetBrains IDEs with XML support): a visual editor for UML 2.5.1 state machines. `*.fsm` files are XMI 2.5.1 documents holding the UML model plus a UML DI diagram with the layout. It is the JetBrains edition of FSM Editor for VS Code (`../fsm-editor-vscode`) and FSM Editor for Visual Studio (`../fsm-editor-vs`): same concepts, file format, rules and messages, reimplemented in Kotlin (a port of the Visual Studio edition's C# Core; no JavaScript is reused). Code generation runs the VS Code project's `fsm` CLI, or fsm-generator for Jinja templates.
+IntelliJ Platform plugin (2024.3+, all JetBrains IDEs with XML support): a visual editor for UML 2.5.1 state machines. `*.fsm` files are XMI 2.5.1 documents holding the UML model plus a UML DI diagram with the layout. It is the JetBrains edition of FSM Editor for VS Code (`../fsm-editor-vscode`) and FSM Editor for Visual Studio (`../fsm-editor-vs`): same concepts, file format, rules and messages, reimplemented in Kotlin (a port of the Visual Studio edition's C# Core; no JavaScript is reused). Code generation runs `fsm write`, the Rust command-line tool of `../fsm-cli`, with Jinja templates.
 
 ## Commands
 
@@ -9,7 +9,7 @@ IntelliJ Platform plugin (2024.3+, all JetBrains IDEs with XML support): a visua
 ./gradlew :plugin:test        # headless IDE tests; also paints the editor into plugin/build/screenshots/*.png
 ./gradlew :plugin:runIde      # sandbox IDE with the plugin; try examples/MediaPlayer.fsm and examples/Order.fsm (uses Payment.fsm)
 ./gradlew :plugin:buildPlugin :plugin:verifyPlugin [-PverifyIde=<local IDE path>]
-scripts/fetch-cli.sh [--all]  # copy the fsm CLI + templates into plugin/cli/<platform> (gitignored)
+scripts/fetch-cli.sh [--all] [--build] [<dir>]  # copy fsm + templates (from ../fsm-cli, or --all from a folder of unpacked release archives) into plugin/cli/<platform> (gitignored)
 ```
 
 ## Architecture
@@ -24,13 +24,14 @@ scripts/fetch-cli.sh [--all]  # copy the fsm CLI + templates into plugin/cli/<pl
   - Copy/Cut/Paste/Delete come from the IDE actions through `DiagramCanvas.uiDataSnapshot` (only while the canvas has the focus); other keys are handled by the canvas.
   - `services/FsmAnnotator` reports validation on the `xmi:id` of each element in the Text tab and the Problems view; `FsmResources` makes the XML support ignore the XMI/UML namespaces.
   - `trace/`: `TracePlayerService` (project service) runs a `TraceSession` (polls the logs' size and time to follow them, play timer, machines of the project and open documents) and hands each open diagram its `TraceView`, drawn by `DiagramCanvas`; `TracePlayerWindow.kt` is the Trace Player tool window.
-  - `codegen/FsmCli.kt` runs `fsm <file> --template <hbs> --out <dir>`, or `fsm-generator` (`../fsm-generator`, same arguments and output) for a `.jinja` template, and parses `wrote …` lines and `file:line: severity: message` problems. The release workflow bundles fsm-generator in `plugin/generator/<platform>/` (pinned by `FSM_GENERATOR_VERSION`). `CodeGeneration.generate` is the whole flow; output goes to the FSM Code Generation tool window.
+  - `codegen/FsmCli.kt` runs `fsm write <file> --template <jinja> --out <dir>` and parses `wrote …` lines, `file:line: severity: message` problems and fsm's own `fsm: …` messages (shown when it fails, such as a template it refuses). The release workflow bundles `fsm` and its templates in `plugin/cli/<platform>/`, from the archives of the fsm-cli release pinned by `FSM_CLI_VERSION`. `CodeGeneration.generate` is the whole flow; output goes to the FSM Code Generation tool window.
 
 ## Project rules
 
 - Keep parity with the VS Code and Visual Studio editions: text grammar, validation rules and messages, XMI output, clipboard JSON. `core/src/test/resources/fixtures` holds reference results from VS Code, the same as the Visual Studio edition's. Regenerate them from the umbrella repo with `node parity/fixtures.mjs` when the reference changes (see fixtures/README.md), and add a parity case for any format or rule change. `core` ports the Visual Studio edition's C# Core file for file, so port a change from there. `Geometry.kt` mirrors `media/editor.js` of the VS Code edition, and only its UML DI region shapes are covered by the fixtures: compare the rest by hand, for example with the screenshots from `:plugin:test`.
 - **Text grammar:** behaviors are argument-less calls separated by `;`; conditions combine calls with `!`, `&&`, `||` and parentheses; `else` only on choice/junction branches; triggers are event names or `after(<number><ms|s|m|h>)`. The editor refuses invalid text, and the validator reports it.
 - **Out of scope:** state machine extension/inheritance and the transition-oriented notation.
-- Don't reimplement code generation: templates and the code model belong to the `fsm` CLI.
+- Don't reimplement code generation: templates and the code model belong to fsm-cli.
+- `.fsm` files hold no model hash: `Xmi.kt` doesn't write the `<modelHash>` extension of older files, and reading ignores it. fsm-cli computes the hash from the file.
 - Core must not reference IntelliJ classes. Keep the plugin free of internal, override-only and experimental API: `verifyPlugin` must report "Compatible" with no such usages (Kotlin compiles with `-jvm-default=no-compatibility` so implementations of platform interfaces don't re-declare their default methods). Kotlin API level stays at 2.0 (the stdlib of 2024.3).
 - User-facing docs: `README.md`, `docs/UML-CONFORMANCE.md` (update when behavior or rules change), `docs/CODEGEN.md`.

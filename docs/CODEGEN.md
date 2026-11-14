@@ -1,8 +1,8 @@
 # Code Generation
 
-FSM Editor for JetBrains IDEs generates source code with the **same `fsm` command-line generator** as FSM Editor for VS Code and for Visual Studio. The plugin doesn't reimplement code generation: it runs `fsm`, which it bundles, and shows the results in the IDE. The same templates therefore produce the same code from IntelliJ IDEA, VS Code, Visual Studio, a terminal or a CI build.
+FSM Editor for JetBrains IDEs generates source code with [Jinja](https://jinja.palletsprojects.com/) templates, running **`fsm`**, the same command-line generator as FSM Editor for VS Code and for Visual Studio. `fsm` is [fsm-cli](https://github.com/vincedupuis/fsm-cli), in Rust, with templates rendered by [MiniJinja](https://github.com/mitsuhiko/minijinja). The plugin doesn't reimplement code generation: it runs `fsm write`, which it bundles, and shows the results in the IDE. The same templates therefore produce the same code from IntelliJ IDEA, VS Code, Visual Studio, a terminal or a CI build.
 
-Jinja templates (`.jinja`) are run by [fsm-generator](https://github.com/vincedupuis/fsm-generator) instead, the same generator in Rust with [MiniJinja](https://github.com/mitsuhiko/minijinja) templates, which the plugin bundles too. It takes the same options and reports problems the same way, and its bundled `ts.jinja` and `sml.jinja` generate the same files as `ts.hbs` and `sml.hbs`. The template's extension decides which program runs.
+Handlebars templates (`.hbs`), which earlier versions used, are no longer supported: `fsm` refuses them and says so. [Coming from the Handlebars templates](https://github.com/vincedupuis/fsm-cli#coming-from-the-handlebars-templates) shows how to convert one to Jinja.
 
 - [From the IDE](#from-the-ide)
 - [From the command line and builds](#from-the-command-line-and-builds)
@@ -13,7 +13,7 @@ Jinja templates (`.jinja`) are run by [fsm-generator](https://github.com/vincedu
 
 Run **Generate Code...** from the diagram toolbar (**Code**), the context menu of a `.fsm` file in the Project view, the context menu of the editor tab, or **Tools › FSM Editor**. A dialog asks for:
 
-1. **The template**: the templates bundled with the generators (`ts` and `sml`, as *bundled Handlebars template* and *bundled Jinja template*), any `*.hbs` or `*.jinja` file of the project, or **Browse...**.
+1. **The template**: the templates bundled with `fsm` (`ts` and `sml`, as *bundled template*), any `*.jinja` file of the project, or **Browse...**.
 2. **The output folder.** Generated files are overwritten every time.
 
 The last template, and the last output folder of each machine, are remembered.
@@ -30,19 +30,19 @@ To generate on a key, assign one to *Generate Code...* in Settings › Keymap (s
 
 ## From the command line and builds
 
-The bundled program is a standalone executable (no Node.js needed), in the `cli/<platform>` folder of the plugin's install directory. It's also published as an archive for Windows, macOS and Linux with FSM Editor for VS Code:
+The bundled program is a single executable without dependencies, in the `cli/<platform>` folder of the plugin's install directory, with the bundled templates in `cli/<platform>/templates`. It's also published for Windows, macOS and Linux on the [fsm-cli releases](https://github.com/vincedupuis/fsm-cli/releases):
 
 ```sh
-fsm "models/**/*.fsm" --template ts --out src/generated
+fsm write "models/**/*.fsm" --template ts --out src/generated
 ```
 
-Exit codes: `0` success, `1` errors in the machines or the template (with `--check`, also files missing or out of date), `2` bad usage. Problems are printed as `file:line: severity: message`, which build logs and CI understand. With `--check`, `fsm` writes nothing and reports the generated files that are missing, or out of date because their `.fsm` file's model hash has changed since ([details](https://github.com/vincedupuis/fsm-editor-vscode/blob/main/docs/CODEGEN.md#from-the-command-line)). To generate code on every Gradle build:
+Exit codes: `0` success, `1` errors in the machines or the template (with `--check`, also files missing or out of date), `2` bad usage. Problems are printed as `file:line: severity: message`, which build logs and CI understand. With `--check`, `fsm write` writes nothing and reports the generated files that are missing, or out of date because their `.fsm` file's model hash has changed since ([details](https://github.com/vincedupuis/fsm-cli#fsm-write)). To generate code on every Gradle build:
 
 ```kotlin
 val generateStateMachines by tasks.registering(Exec::class) {
     inputs.files(fileTree("models") { include("*.fsm") })
     outputs.dir(layout.buildDirectory.dir("generated/fsm"))
-    commandLine("fsm", "models/*.fsm", "-t", "ts", "-o", layout.buildDirectory.dir("generated/fsm").get().asFile.path)
+    commandLine("fsm", "write", "models/*.fsm", "-t", "ts", "-o", layout.buildDirectory.dir("generated/fsm").get().asFile.path)
 }
 ```
 
@@ -52,14 +52,12 @@ In this order:
 
 1. The path set in Settings › Tools › FSM Editor › *fsm executable*, when set.
 2. The executable bundled with the plugin (`cli/<platform>/fsm`, or `fsm.exe` on Windows), with its templates in `cli/<platform>/templates`. `<platform>` is `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64` or `windows-x64`.
-3. An `fsm` (`fsm.exe` or `fsm.cmd` on Windows) on the `PATH`, for example from `npm link` in a clone of FSM Editor for VS Code.
+3. An `fsm` (`fsm.exe` on Windows) on the `PATH`.
 
 Set the option to use a newer generator than the bundled one, your own build, or when the plugin was built without the generator for your platform.
 
-fsm-generator, for Jinja templates, is found the same way: Settings › Tools › FSM Editor › *fsm-generator executable*, then the bundled `generator/<platform>/fsm-generator` (`fsm-generator.exe` on Windows; templates in `generator/<platform>/templates`), then an `fsm-generator` on the `PATH`. Its archives for Windows, macOS and Linux are on [its GitHub Releases](https://github.com/vincedupuis/fsm-generator/releases).
-
 ## Templates and the code model
 
-Templates are Handlebars files, optionally with YAML front matter. One template writes any number of files per machine through `{{#file "path"}}` blocks. They can't run code: every helper is built into the generator.
+A template is a Jinja file, with optional front matter. One template writes any number of files per machine through `{% filter file("path") %}` blocks. Templates can't run code: every filter and function is built into the generator.
 
-The bundled templates, TypeScript (`ts`) and [C++17 for Boost.SML](https://github.com/vincedupuis/fsm-editor-vscode/blob/main/docs/CODEGEN.md#the-boostsml-template) (`sml`), writing templates for other languages (C#, C++, Java, Kotlin, Python...), the helpers, the code model the templates receive, and the execution semantics of the generated code are documented with the generator, in [FSM Editor for VS Code's CODEGEN.md](https://github.com/vincedupuis/fsm-editor-vscode/blob/main/docs/CODEGEN.md). Templates in your project are listed in the Generate Code dialog, so you can keep them next to your models.
+The template language is documented in [fsm-cli's README](https://github.com/vincedupuis/fsm-cli#writing-a-template). The bundled templates, TypeScript (`ts`) and [C++17 for Boost.SML](https://github.com/vincedupuis/fsm-editor-vscode/blob/main/docs/CODEGEN.md#the-boostsml-template) (`sml`), the code model the templates receive, and the execution semantics of the generated code are documented in [FSM Editor for VS Code's CODEGEN.md](https://github.com/vincedupuis/fsm-editor-vscode/blob/main/docs/CODEGEN.md). Templates in your project are listed in the Generate Code dialog, so you can keep them next to your models.
