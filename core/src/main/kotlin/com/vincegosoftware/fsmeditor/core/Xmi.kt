@@ -743,8 +743,11 @@ object Xmi {
                         regionShapes[target] = box
                     }
                 } else if (type == "umldi:UMLEdge" && t != null) {
-                    val pts = kids(el, "waypoint").map { PointD(Num.parse(it.attr("x")), Num.parse(it.attr("y"))) }
-                    if (pts.size > 2) t.points = pts.subList(1, pts.size - 1).toMutableList()
+                    // Read as JavaScript reads them (+x || 0): an infinite coordinate stays infinite for the label's
+                    // middle (which it makes NaN, so the offset is 0), and the bend points become 0, as the other
+                    // editions' JSON makes them.
+                    val pts = kids(el, "waypoint").map { PointD(bound(it.attr("x")), bound(it.attr("y"))) }
+                    if (pts.size > 2) t.points = pts.subList(1, pts.size - 1).map { PointD(finite(it.x), finite(it.y)) }.toMutableList()
                     val label = el.children.firstOrNull { typeOf(it) == "umldi:UMLLabel" }
                     val lb = kid(label, "bounds")
                     if (lb != null && pts.size >= 2) {

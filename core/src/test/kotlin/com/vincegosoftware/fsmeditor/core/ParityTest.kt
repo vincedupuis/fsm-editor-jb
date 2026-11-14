@@ -35,14 +35,14 @@ class ParityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle"])
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle", "infinite"])
     fun writesTheSameXmi(name: String) {
         val text = read(fixture("$name.fsm"))
         assertEquals(read(fixture("$name.roundtrip.xmi")), Xmi.toXmi(Xmi.fromXmi(text)))
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle"])
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle", "infinite"])
     fun oneSaveSettles(name: String) {
         val saved = read(fixture("$name.roundtrip.xmi"))
         assertEquals(saved, Xmi.toXmi(Xmi.fromXmi(saved)))
@@ -62,7 +62,7 @@ class ParityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle"])
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle", "infinite"])
     fun casesValidateTheSame(name: String) {
         val model = Xmi.fromXmi(read(fixture("$name.fsm")))
         assertEquals(format(expected.obj("cases").obj(name).obj("issues")), format(Validation.validate(model)))
