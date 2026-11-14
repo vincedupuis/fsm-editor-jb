@@ -35,10 +35,17 @@ class ParityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids"])
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle"])
     fun writesTheSameXmi(name: String) {
         val text = read(fixture("$name.fsm"))
         assertEquals(read(fixture("$name.roundtrip.xmi")), Xmi.toXmi(Xmi.fromXmi(text)))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle"])
+    fun oneSaveSettles(name: String) {
+        val saved = read(fixture("$name.roundtrip.xmi"))
+        assertEquals(saved, Xmi.toXmi(Xmi.fromXmi(saved)))
     }
 
     @ParameterizedTest
@@ -55,7 +62,7 @@ class ParityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids"])
+    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle"])
     fun casesValidateTheSame(name: String) {
         val model = Xmi.fromXmi(read(fixture("$name.fsm")))
         assertEquals(format(expected.obj("cases").obj(name).obj("issues")), format(Validation.validate(model)))
@@ -117,7 +124,9 @@ class ParityTest {
         model.transitions[0].labelOffset = PointD(123.5, 0.0)
         val xmi = Xmi.toXmi(model)
         assertTrue("<bounds xmi:type=\"dc:Bounds\" x=\"180.1\" y=\"92\" width=\"100\" height=\"16\"/>" in xmi)
-        assertEquals(PointD(123.5, 0.0), Xmi.fromXmi(xmi).transitions[0].labelOffset)
+        // Read back without rounding (123.45 in xmi.ts too), so that it gives the same box again.
+        assertEquals(PointD(123.45, 0.0), Xmi.fromXmi(xmi).transitions[0].labelOffset)
+        assertEquals(xmi, Xmi.toXmi(Xmi.fromXmi(xmi)))
         assertEquals(5.0, Num.hypot(3.0, -4.0))
         // Math.hypot(1.5, 2.5) in JavaScript; sqrt(1.5 * 1.5 + 2.5 * 2.5) is 2.9154759474226504.
         assertEquals(2.91547594742265, Num.hypot(1.5, 2.5))

@@ -15,6 +15,12 @@ class XmiException(message: String) : Exception(message)
  *   UMLLabel whose center is the middle of those waypoints moved by the
  *   label offset;
  * - the region layout of an orthogonal state follows from its region shapes;
+ * - coordinates are rounded to 0.1 px, and what is derived from them (centers,
+ *   region shapes, the middle of an edge) is computed from the rounded values,
+ *   the region sizes as the file holds them: reading a written file and writing
+ *   it again gives the same text;
+ * - the diagram lists the shapes, edges and styles in the order reading the
+ *   model gives its elements (document order), each element written once;
  * - colors and groups are kept in one xmi:Extension at the end of the diagram,
  *   with a <style element="id" color="#rrggbb" entry="#rrggbb" …/> per colored
  *   vertex or transition (UML DI has no color), then a
@@ -72,10 +78,86 @@ object Xmi {
         return pts[0]
     }
 
+    /**
+     * The region sizes a file holds: [Geometry.regionSizes] with the sizes rounded to 0.1 px as they are written, so
+     * that the sizes read back from the region shapes give the same regions (equal parts of 10 px in three would
+     * otherwise be read back as 3.3, 3.3 and the rest, and move on the next save).
+     */
+    private fun fileRegionSizes(regs: List<Region>, total: Double): List<Double> {
+        fun rounded(sizes: List<Double>) = Geometry.regionSizes(sizes.map { Region(size = Num.r1(it)) }, total)
+        return rounded(rounded(Geometry.regionSizes(regs, total)))
+    }
+
+    /** The region shapes of a state: [Geometry.regionRects] with the estimated text width and the region sizes a file holds. */
+    private fun regionShapes(model: FsmModel, v: Vertex): List<RegionRect> {
+        val regs = v.regions
+        if (regs.isEmpty()) return emptyList()
+        val top = v.y + minOf(Geometry.headerHeight(model, v, Geometry::estimateLabelWidth), v.h - 20)
+        val bh = v.y + v.h - top
+        val horizontal = v.regionLayout == RegionLayout.Horizontal
+        val sizes = fileRegionSizes(regs, if (horizontal) v.w else bh)
+        var at = if (horizontal) v.x else top
+        return regs.mapIndexed { i, r ->
+            val rect = if (horizontal) RectD(at, top, sizes[i], bh) else RectD(v.x, at, v.w, sizes[i])
+            at += sizes[i]
+            RegionRect(r.id, r.name, rect)
+        }
+    }
+
     // ------------------------------------------------------------------ writing
 
+    /**
+     * Writes a state machine file. Reading it back and writing it again gives the same text. When ids are used
+     * twice (files edited by hand), reading gives a shape, bend points or a color to the last element with that id
+     * and default places to the others, so what reading gives is written again, until the text no longer changes.
+     */
     fun toXmi(source: FsmModel): String {
+        var text = writeModel(source)
+        if (!sharesIds(source)) return text
+        for (i in 0 until 10) {
+            val again = writeModel(fromXmi(text))
+            if (again == text) break
+            text = again
+        }
+        return text
+    }
+
+    /** Whether vertices, transitions and regions use some id more than once. */
+    private fun sharesIds(model: FsmModel): Boolean {
+        val ids = HashSet<String>()
+        var n = 0
+        fun add(id: String) {
+            ids.add(id)
+            n++
+        }
+        for (r in model.regions) add(r.id)
+        for (v in model.vertices) {
+            add(v.id)
+            for (r in v.regions) add(r.id)
+        }
+        for (t in model.transitions) add(t.id)
+        return ids.size != n
+    }
+
+    /** Zero, or NaN (JavaScript's falsy numbers). */
+    private fun falsy(n: Double) = n == 0.0 || n.isNaN()
+
+    private fun writeModel(source: FsmModel): String {
         val m = source.copy().normalize()
+        // Bounds as the file holds them, so that what is derived from them (centers, header lines, region shapes)
+        // comes out the same when the file is read back and written again. A size of 0 is read back as the
+        // default size: it is written as that.
+        for (v in m.vertices) {
+            v.x = Num.r1(v.x)
+            v.y = Num.r1(v.y)
+            v.w = Num.r1(v.w)
+            v.h = Num.r1(v.h)
+            if (falsy(v.w) || falsy(v.h)) {
+                val (w, h) = v.type.defaultSize
+                v.w = w
+                v.h = h
+            }
+        }
         val ix = ModelIndex(m)
         val topRegions = m.regions.map { it.id }.toSet()
         val protocol = m.kind == MachineKind.Protocol
@@ -179,17 +261,44 @@ object Xmi {
 
         lateinit var vertexNode: (Vertex) -> XNode
 
-        fun regionNode(r: Region): XNode {
-            val kids = m.vertices.filter { it.parent == r.id && !isMachinePoint(it) }
-            return XNode("region", "xmi:type" to "uml:Region", "xmi:id" to r.id, "name" to r.name)
-                .add(kids.filter { it.type == VertexType.Comment }.map(::commentNode))
-                .add(kids.filter { it.type != VertexType.Comment }.map { vertexNode(it) })
-                .add((transitionsByRegion[r.id] ?: emptyList<Transition>()).map(::transitionNode))
-        }
-
+        // Each vertex and transition is written once, in the first place that holds it (two states with one id,
+        // or a region id used again, would otherwise write it twice, and the file would grow on each save).
+        // docVertices and docTransitions are what the document holds, in the order reading it gives them.
+        val writtenVertices = HashSet<Vertex>()
+        val writtenTransitions = HashSet<Transition>()
+        val docVertices = ArrayList<Vertex>()
+        val docTransitions = ArrayList<Transition>()
         // States on the way down: a region id used again (a file edited by hand) can make a state its own descendant.
         val writing = HashSet<Vertex>()
+
+        fun regionNode(r: Region): XNode {
+            val kids = m.vertices.filter { it.parent == r.id && !isMachinePoint(it) }
+            val comments = kids.filter { it.type == VertexType.Comment && it !in writtenVertices }
+            for (c in comments) {
+                writtenVertices.add(c)
+                docVertices.add(c)
+            }
+            val vertices = ArrayList<XNode>()
+            for (v in kids) {
+                if (v.type == VertexType.Comment) continue
+                // Failing like the VS Code edition (which runs out of stack), instead of overflowing it.
+                if (v in writing) throw XmiException("State '${v.id}' is inside one of its own regions.")
+                if (v !in writtenVertices) vertices.add(vertexNode(v))
+            }
+            val transitions = (transitionsByRegion[r.id] ?: emptyList<Transition>()).filter { it !in writtenTransitions }
+            for (t in transitions) {
+                writtenTransitions.add(t)
+                docTransitions.add(t)
+            }
+            return XNode("region", "xmi:type" to "uml:Region", "xmi:id" to r.id, "name" to r.name)
+                .add(comments.map(::commentNode))
+                .add(vertices)
+                .add(transitions.map(::transitionNode))
+        }
+
         vertexNode = fun(v: Vertex): XNode {
+            writtenVertices.add(v)
+            docVertices.add(v)
             if (v.type == VertexType.Final) return XNode("subvertex", "xmi:type" to "uml:FinalState", "xmi:id" to v.id, "name" to v.name)
             if (v.type.isPseudostate) return pointNode("subvertex", v)
             val node = XNode("subvertex", "xmi:type" to "uml:State", "xmi:id" to v.id, "name" to v.name)
@@ -198,10 +307,19 @@ object Xmi {
                 .add(behavior("doActivity", v.id + "_do", v.doActivity))
                 .add(constraint("stateInvariant", v.id + "_inv", v.invariant))
                 .add(triggers("deferrableTrigger", v.id, v.deferrable))
+            // Read back: the connection points, then the connection point references.
+            val points = ArrayList<Vertex>()
+            val references = ArrayList<Vertex>()
             for (cp in m.vertices) {
-                if (cp.parent != v.id) continue
-                if (cp.type == VertexType.EntryPoint || cp.type == VertexType.ExitPoint) node.add(pointNode("connectionPoint", cp))
+                if (cp.parent != v.id || cp in writtenVertices) continue
+                if (cp.type == VertexType.EntryPoint || cp.type == VertexType.ExitPoint) {
+                    writtenVertices.add(cp)
+                    points.add(cp)
+                    node.add(pointNode("connectionPoint", cp))
+                }
                 if (cp.type == VertexType.ConnectionPointRef) {
+                    writtenVertices.add(cp)
+                    references.add(cp)
                     val file = v.submachine.split('#')[0]
                     node.add(
                         XNode("connection", "xmi:type" to "uml:ConnectionPointReference", "xmi:id" to cp.id).add(
@@ -210,8 +328,9 @@ object Xmi {
                     )
                 }
             }
-            // Failing like the VS Code edition (which runs out of stack), instead of overflowing it.
-            if (!writing.add(v)) throw XmiException("State '${v.id}' is inside one of its own regions.")
+            docVertices.addAll(points)
+            docVertices.addAll(references)
+            writing.add(v)
             for (r in v.regions) node.add(regionNode(r))
             writing.remove(v)
             if (v.submachine.isNotEmpty()) node.add(XNode("submachine", "href" to v.submachine))
@@ -230,8 +349,15 @@ object Xmi {
                     .add(XNode("body").add(m.documentation)),
             )
         }
-        machine.add(m.vertices.filter(::isMachinePoint).map { pointNode("connectionPoint", it) })
-        machine.add(m.regions.map(::regionNode))
+        // The machine's own connection points come first in the file, but are read after its regions.
+        val regionNodes = m.regions.map(::regionNode)
+        val machinePoints = m.vertices.filter { isMachinePoint(it) && it !in writtenVertices }
+        for (v in machinePoints) {
+            writtenVertices.add(v)
+            docVertices.add(v)
+        }
+        machine.add(machinePoints.map { pointNode("connectionPoint", it) })
+        machine.add(regionNodes)
 
         val packaged = ArrayList<XNode>()
         if (m.context.isNotEmpty()) {
@@ -248,7 +374,7 @@ object Xmi {
         packaged.addAll(eventElements)
 
         // Stereotypes: an embedded profile with one stereotype per name, extending UML::State.
-        val stereotyped = m.vertices.filter { it.type == VertexType.State && it.stereotype.isNotEmpty() }
+        val stereotyped = docVertices.filter { it.type == VertexType.State && it.stereotype.isNotEmpty() }
         val stereoNames = stereotyped.map { it.stereotype }.distinct()
         val profileApplication = ArrayList<XNode>()
         val applications = ArrayList<XNode>()
@@ -280,14 +406,28 @@ object Xmi {
             }
         }
 
-        // Diagram
+        // Diagram: what the document holds, in the order reading it gives (a model in another order, or holding
+        // elements the document doesn't, would otherwise be written differently once read back).
+        val held = FsmModel().also {
+            it.id = m.id
+            it.name = m.name
+            it.kind = m.kind
+            it.context = m.context
+            it.documentation = m.documentation
+            it.regions = m.regions
+            it.vertices = docVertices
+            it.transitions = docTransitions
+        }
+        val docById = HashMap<String, Vertex>()
+        for (v in docVertices) docById[v.id] = v
+        val docIds = (docVertices.map { it.id } + docTransitions.map { it.id }).toHashSet()
         fun bounds(x: Double, y: Double, w: Double, h: Double) =
             XNode("bounds", "xmi:type" to "dc:Bounds", "x" to Num.r1(x), "y" to Num.r1(y), "width" to Num.r1(w), "height" to Num.r1(h))
         val shapes = ArrayList<XNode>()
-        for (v in m.vertices) {
+        for (v in docVertices) {
             shapes.add(XNode("ownedElement", "xmi:type" to "umldi:UMLShape", "xmi:id" to "di_" + v.id, "modelElement" to v.id).add(bounds(v.x, v.y, v.w, v.h)))
             if (v.type == VertexType.State) {
-                for (rb in Geometry.regionRects(m, v, Geometry::estimateLabelWidth)) {
+                for (rb in regionShapes(held, v)) {
                     shapes.add(
                         XNode("ownedElement", "xmi:type" to "umldi:UMLShape", "xmi:id" to "di_" + rb.id, "modelElement" to rb.id)
                             .add(bounds(rb.rect.x, rb.rect.y, rb.rect.w, rb.rect.h)),
@@ -296,15 +436,16 @@ object Xmi {
             }
         }
         val edges = ArrayList<XNode>()
-        for (t in m.transitions) {
-            val s = ix.vertex(t.source) ?: continue
-            val g = ix.vertex(t.target) ?: continue
+        for (t in docTransitions) {
+            val s = docById[t.source] ?: continue
+            val g = docById[t.target] ?: continue
             if (t.kind == TransitionKind.Internal && s === g && s.type == VertexType.State) continue // drawn in the state's compartment
-            val pts = listOf(s.center) + t.points + listOf(g.center)
+            // The waypoints as written: the label's middle is measured on them, as reading does.
+            val pts = (listOf(s.center) + t.points + listOf(g.center)).map { PointD(Num.r1(it.x), Num.r1(it.y)) }
             val edge = XNode(
                 "ownedElement", "xmi:type" to "umldi:UMLEdge", "xmi:id" to "di_" + t.id, "modelElement" to t.id,
                 "source" to "di_" + s.id, "target" to "di_" + g.id,
-            ).add(pts.map { XNode("waypoint", "xmi:type" to "dc:Point", "x" to Num.r1(it.x), "y" to Num.r1(it.y)) })
+            ).add(pts.map { XNode("waypoint", "xmi:type" to "dc:Point", "x" to it.x, "y" to it.y) })
             val off = t.labelOffset
             if (off != null) {
                 val mid = labelMid(pts)
@@ -317,9 +458,9 @@ object Xmi {
             }
             edges.add(edge)
         }
-        for (c in m.vertices.filter { it.type == VertexType.Comment }) {
+        for (c in docVertices.filter { it.type == VertexType.Comment }) {
             for ((i, a) in c.anchors.withIndex()) {
-                if (ix.vertex(a) == null && ix.transition(a) == null) continue
+                if (a !in docIds) continue
                 edges.add(
                     XNode(
                         "ownedElement", "xmi:type" to "umldi:UMLEdge", "xmi:id" to "di_${c.id}_anchor${i + 1}", "modelElement" to c.id,
@@ -338,10 +479,10 @@ object Xmi {
             }
             if (style.attrs.size > 1) styles.add(style)
         }
-        for (v in m.vertices) addStyle(v.id, v.color, v.itemColors)
-        for (t in m.transitions) addStyle(t.id, t.color, t.itemColors)
+        for (v in docVertices) addStyle(v.id, v.color, v.itemColors)
+        for (t in docTransitions) addStyle(t.id, t.color, t.itemColors)
         val groups = LinkedHashMap<String, MutableList<String>>()
-        for (v in m.vertices) if (v.group.isNotEmpty()) groups.getOrPut(v.group) { ArrayList() }.add(v.id)
+        for (v in docVertices) if (v.group.isNotEmpty()) groups.getOrPut(v.group) { ArrayList() }.add(v.id)
         for ((id, members) in groups) styles.add(XNode("group", "id" to id, "members" to members.joinToString(" ")))
         val diagram = XNode("umldi:UMLStateMachineDiagram", "xmi:id" to smId + "_diagram", "name" to m.name, "modelElement" to smId, "isFrame" to "false")
             .add(shapes, edges)
@@ -610,9 +751,11 @@ object Xmi {
                         val mid = labelMid(pts)
                         // A missing or invalid bound gives NaN, which the other editions' JSON turns into 0.
                         fun offset(n: Double) = if (n.isNaN() || n.isInfinite()) 0.0 else n
+                        // Not rounded: the middle is off the 0.1 px grid, and an offset rounded to 0.1 px could move the
+                        // label by 0.1 px on each save. Written again from the same waypoints, it gives the same label box.
                         t.labelOffset = PointD(
-                            offset(Num.r1(Num.parseJs(lb.attr("x")) + Num.parseJs(lb.attr("width")) / 2 - mid.x)),
-                            offset(Num.r1(Num.parseJs(lb.attr("y")) + Num.parseJs(lb.attr("height")) / 2 - mid.y)),
+                            offset(Num.parseJs(lb.attr("x")) + Num.parseJs(lb.attr("width")) / 2 - mid.x),
+                            offset(Num.parseJs(lb.attr("y")) + Num.parseJs(lb.attr("height")) / 2 - mid.y),
                         )
                     }
                 }
