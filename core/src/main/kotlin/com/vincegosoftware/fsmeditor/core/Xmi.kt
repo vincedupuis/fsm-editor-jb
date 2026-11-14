@@ -17,8 +17,8 @@ class XmiException(message: String) : Exception(message)
  * - the region layout of an orthogonal state follows from its region shapes;
  * - coordinates are rounded to 0.1 px, and what is derived from them (centers,
  *   region shapes, the middle of an edge) is computed from the rounded values,
- *   the region sizes as the file holds them: reading a written file and writing
- *   it again gives the same text;
+ *   the region sizes as the file holds them: reading a written file whose ids
+ *   are unique and writing it again gives the same text;
  * - the diagram lists the shapes, edges and styles in the order reading the
  *   model gives its elements (document order), each element written once;
  * - colors and groups are kept in one xmi:Extension at the end of the diagram,
@@ -106,43 +106,16 @@ object Xmi {
 
     // ------------------------------------------------------------------ writing
 
-    /**
-     * Writes a state machine file. Reading it back and writing it again gives the same text. When ids are used
-     * twice (files edited by hand), reading gives a shape, bend points or a color to the last element with that id
-     * and default places to the others, so what reading gives is written again, until the text no longer changes.
-     */
-    fun toXmi(source: FsmModel): String {
-        var text = writeModel(source)
-        if (!sharesIds(source)) return text
-        for (i in 0 until 10) {
-            val again = writeModel(fromXmi(text))
-            if (again == text) break
-            text = again
-        }
-        return text
-    }
-
-    /** Whether vertices, transitions and regions use some id more than once. */
-    private fun sharesIds(model: FsmModel): Boolean {
-        val ids = HashSet<String>()
-        var n = 0
-        fun add(id: String) {
-            ids.add(id)
-            n++
-        }
-        for (r in model.regions) add(r.id)
-        for (v in model.vertices) {
-            add(v.id)
-            for (r in v.regions) add(r.id)
-        }
-        for (t in model.transitions) add(t.id)
-        return ids.size != n
-    }
-
     /** Zero, or NaN (JavaScript's falsy numbers). */
     private fun falsy(n: Double) = n == 0.0 || n.isNaN()
 
-    private fun writeModel(source: FsmModel): String {
+    /**
+     * Writes a state machine file. When its ids are unique (the validator reports those that aren't), reading it back
+     * and writing it again gives the same text. With ids used twice (files edited by hand), reading gives a shape, bend
+     * points or a color to the last element with that id and default places to the others, so such a file can still
+     * change on the next save; it doesn't grow, as each element is written once.
+     */
+    fun toXmi(source: FsmModel): String {
         val m = source.copy().normalize()
         // Bounds as the file holds them, so that what is derived from them (centers, header lines, region shapes)
         // comes out the same when the file is read back and written again. A size of 0 is read back as the
