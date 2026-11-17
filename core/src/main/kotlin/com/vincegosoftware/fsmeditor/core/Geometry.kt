@@ -264,6 +264,12 @@ object Geometry {
     /** The polyline a transition is drawn along, or null when an end is missing. */
     fun route(ix: ModelIndex, t: Transition): List<PointD>? {
         val s = ix.vertex(t.source) ?: return null
+        if (ix.vertex(t.target) == null && t.kind != TransitionKind.Internal) {
+            // A transition whose target doesn't exist (a reference that names nothing): a short arrow ending in a marker.
+            val bends = t.points.toMutableList()
+            val tip = if (bends.isNotEmpty()) bends.removeAt(bends.size - 1) else PointD(s.x + s.w + 46, s.y + s.h / 2)
+            return listOf(clip(s, bends.firstOrNull() ?: tip)) + bends + tip
+        }
         val g = ix.vertex(t.target) ?: return null
         if (isLoop(ix, t)) return loopRoute(t, s)
         val pts = t.points
@@ -398,7 +404,7 @@ object Geometry {
         }
         for (v in model.vertices) {
             add(v.x, v.y)
-            val caption = v.invariant.isNotEmpty() || (v.name.isNotEmpty() && v.type != VertexType.State)
+            val caption = v.invariant.isNotEmpty() || (Format.shown(v.name).isNotEmpty() && v.type != VertexType.State)
             add(v.x + v.w, v.y + v.h + if (caption) 16 else 0)
         }
         for (t in model.transitions) {
@@ -428,6 +434,15 @@ object Geometry {
             .map { it.first }
 
     /** Whether a transition is drawn as a line (internal transitions are listed in the state instead). */
+    /** A transition whose target doesn't exist (a reference that names nothing): drawn as a short arrow ending in a marker. */
+    fun isDangling(ix: ModelIndex, t: Transition): Boolean = ix.vertex(t.source) != null && ix.vertex(t.target) == null && t.kind != TransitionKind.Internal
+
+    /** The color an element is drawn in: its own, or for an initial or history pseudostate its transition's. */
+    fun colorOf(model: FsmModel, v: Vertex): String? {
+        val pseudo = v.type == VertexType.Initial || v.type == VertexType.ShallowHistory || v.type == VertexType.DeepHistory
+        return ElementColors.of(if (pseudo) model.transitions.firstOrNull { it.source == v.id }?.color else v.color)
+    }
+
     fun isDrawn(ix: ModelIndex, t: Transition): Boolean =
         !(t.kind == TransitionKind.Internal && t.source == t.target && ix.vertex(t.source)?.type == VertexType.State)
 }

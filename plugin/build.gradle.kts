@@ -14,6 +14,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     intellijPlatform {
         intellijIdeaCommunity(providers.gradleProperty("platformVersion"))
+        // JSON support (the Text tab of .fsm and .fsm.layout files, their schemas): a plugin of its own since 2024.3.
+        bundledPlugin("com.intellij.modules.json")
         testFramework(TestFrameworkType.Platform)
         pluginVerifier()
     }
@@ -56,11 +58,13 @@ intellijPlatform {
     }
 }
 
-// The fsm code generator of fsm-cli with its templates, in plugin/cli/<platform> (copied by scripts/fetch-cli.sh,
-// or unpacked from fsm-cli's release archives by the release workflow; gitignored), ships in the plugin's cli/ folder.
+// The fsm code generator of fsm-cli with its templates, in plugin/cli/<platform>, and the model file's JSON Schema, in
+// plugin/cli/schemas (copied by scripts/fetch-cli.sh, or unpacked from fsm-cli's release archives by the release
+// workflow; gitignored), ship in the plugin's cli/ folder. fsm-cli's test cases (plugin/cli/cases) are for the tests only.
 val cliDir = rootProject.layout.projectDirectory.dir("plugin/cli")
 tasks.named<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>("prepareSandbox") {
     from(cliDir) {
+        exclude("cases/**")
         into(intellijPlatform.projectName.map { "$it/cli" })
     }
 }

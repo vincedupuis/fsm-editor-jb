@@ -29,6 +29,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
 .hit{fill:transparent}
 .anchor{fill:none;stroke:#333;stroke-width:1;stroke-dasharray:4 3;opacity:.7}
 .line,.arrow{fill:none;stroke:#333;stroke-width:1.3;stroke-linejoin:round}
+.dangling{fill:#fff;stroke:#c00;stroke-width:1.4}
 .tlabel{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}"""
 
     /** Fill of a state (`.shape` in the style sheet). */
@@ -88,7 +89,8 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
         val cy = y + h / 2
         val r = min(w, h) / 2
         sb.append("<g class=\"vertex v-${v.type.key}\">")
-        val c = ElementColors.of(v.color)
+        // An initial or history pseudostate's color is its transition's.
+        val c = Geometry.colorOf(model, v)
         val shapeSt = if (c == null) "" else style("fill:" + ElementColors.tint(c), "stroke:$c")
         val fillSt = if (c == null) "" else style("fill:$c")
         fun strokeSt(width: String?) = style(c?.let { "stroke:$it" }, width?.let { "stroke-width:$it" })
@@ -112,7 +114,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
                     }
                 }
                 sb.append("<rect class=\"shape\" x=\"${f(x)}\" y=\"${f(y)}\" width=\"${f(w)}\" height=\"${f(h)}\" rx=\"10\"$st/>")
-                val title = v.name + if (v.submachine.isNotEmpty()) " : " + session.machineLabel(v.submachine) else ""
+                val title = Format.shown(v.name) + if (v.submachine.isNotEmpty()) " : " + session.machineLabel(v.submachine) else ""
                 val centered = regions.isEmpty() && lines.isEmpty()
                 var ty = y + 16
                 val stereo = v.stereotype.isNotEmpty()
@@ -144,7 +146,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
                                 else "<line class=\"sep dashed\" x1=\"${f1(rr.x)}\" y1=\"${f1(rr.y)}\" x2=\"${f1(rr.x + rr.w)}\" y2=\"${f1(rr.y)}\"$sepSt/>",
                             )
                         }
-                        if (region.name.isNotEmpty()) sb.append(text(rr.x + 6, rr.y + 12, "region-name", region.name, "start", c))
+                        if (Format.shown(region.name).isNotEmpty() && regions.size > 1) sb.append(text(rr.x + 6, rr.y + 12, "region-name", region.name, "start", c))
                     }
                 }
                 if (v.submachine.isNotEmpty()) {
@@ -191,7 +193,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
                 }
             }
         }
-        val caption = if (v.type == VertexType.ConnectionPointRef) session.pointName(session.index.vertex(v.parent), v.ref).ifEmpty { "?" } else v.name
+        val caption = Format.shown(if (v.type == VertexType.ConnectionPointRef) session.pointName(session.index.vertex(v.parent), v.ref).ifEmpty { v.ref }.ifEmpty { "?" } else v.name)
         if (caption.isNotEmpty() && v.type != VertexType.State && v.type != VertexType.Comment) {
             val below = if (v.type == VertexType.Fork || v.type == VertexType.Join) y + h + 13 else y + h + 12
             sb.append(text(cx, below, "activity", caption, "middle", c))
@@ -216,8 +218,13 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
         val lineSt = if (c == null) "" else style("stroke:$c")
         sb.append("<path class=\"line\" d=\"$d\"$lineSt/>")
         val b = pts[pts.size - 1]
-        val (p1, p2) = arrowHead(pts[pts.size - 2], b)
-        sb.append("<path class=\"arrow\" d=\"M${f1(p1.x)},${f1(p1.y)} L${f1(b.x)},${f1(b.y)} L${f1(p2.x)},${f1(p2.y)}\"$lineSt/>")
+        if (Geometry.isDangling(ix, t)) {
+            // The target names nothing: a marker instead of an arrow head.
+            sb.append("<circle class=\"dangling\" cx=\"${f1(b.x)}\" cy=\"${f1(b.y)}\" r=\"6\"/><path class=\"dangling\" d=\"M${f1(b.x - 3)},${f1(b.y - 3)} L${f1(b.x + 3)},${f1(b.y + 3)} M${f1(b.x + 3)},${f1(b.y - 3)} L${f1(b.x - 3)},${f1(b.y + 3)}\"/>")
+        } else {
+            val (p1, p2) = arrowHead(pts[pts.size - 2], b)
+            sb.append("<path class=\"arrow\" d=\"M${f1(p1.x)},${f1(p1.y)} L${f1(b.x)},${f1(b.y)} L${f1(p2.x)},${f1(p2.y)}\"$lineSt/>")
+        }
         val lines = Labels.transitionLabelItems(model, t)
         if (lines.isNotEmpty()) {
             val lp = Geometry.labelPos(t, pts)

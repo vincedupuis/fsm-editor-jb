@@ -9,53 +9,42 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.text.Collator
 
-/** Name, id and connection points of the machine in a file. */
-class MachineSummary(val id: String, val name: String, val points: List<ConnectionPointInfo>) {
+/** Name and connection points of the machine in a file. */
+class MachineSummary(val name: String, val points: List<ConnectionPointInfo>) {
     companion object {
-        fun of(m: FsmModel) = MachineSummary(m.id, m.name, m.machineConnectionPoints())
+        fun of(m: FsmModel) = MachineSummary(m.name, m.machineConnectionPoints())
 
-        /** The summary of a file's text, or null when it isn't a readable state machine. */
-        fun tryRead(text: String): MachineSummary? =
-            try {
-                of(Xmi.fromXmi(text))
-            } catch (_: XmlParseException) {
-                null
-            } catch (_: XmiException) {
-                null
+        /**
+         * The summary of a file's text, or null when it isn't a readable state machine. An old file's (XMI) are its
+         * names once converted, which the references of a converted file use.
+         */
+        fun tryRead(text: String): MachineSummary? {
+            if (Format.isOldFormat(text)) {
+                val converted = Conversion.convertGroup(listOf(ConvertInput("/x.fsm", text)))[0]
+                return if (converted.error != null) null else of(converted.model!!)
             }
+            // Names and points only: no layout to apply.
+            val read = Format.readModel(text)
+            return if (read.failed) null else of(read.model!!)
+        }
     }
 }
 
 /**
- * How state machine files reference each other: submachine states hold an
- * XMI href such as `sub/Payment.fsm#sm`, relative to the referencing file.
+ * How state machine files reference each other: submachine states hold the path of the other file, relative to the
+ * referencing one (`sub/Payment.fsm`). Files of earlier versions hold an XMI href, encoded and with the machine's id
+ * (`sub/Payment.fsm#sm`).
  */
 object Hrefs {
-    private const val UNRESERVED = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789;,/:@&=+$-_.!~*'()"
-
     private val windows = System.getProperty("os.name", "").startsWith("Windows")
-
-    /**
-     * Percent-encodes the file part of an href (encodeHref of the VS Code edition): like JavaScript's encodeURI,
-     * plus `#` and `?`, which would otherwise end the path (a file named `a#b.fsm` is `a%23b.fsm`).
-     */
-    fun encodeUri(s: String): String {
-        val sb = StringBuilder()
-        for (b in s.toByteArray(Charsets.UTF_8)) {
-            val u = b.toInt() and 0xff
-            if (u < 0x80 && UNRESERVED.indexOf(u.toChar()) >= 0) sb.append(u.toChar())
-            else sb.append('%').append(String.format("%02X", u))
-        }
-        return sb.toString()
-    }
 
     /** Decodes %XX escapes as UTF-8; text that isn't a valid escape is kept as is. */
     private val reserved = ";/:@&=+\$,"
 
     /**
-     * Like JavaScript's decodeURI: decodes `%XX` escapes (UTF-8), except those of reserved characters
-     * (`;/:@&=+$,`; unlike decodeURI, `%23` and `%3F` give `#` and `?`, as [encodeUri] writes them), and keeps
-     * malformed ones as they are.
+     * Like JavaScript's decodeURI, for the submachine hrefs of old files: decodes `%XX` escapes (UTF-8), except those
+     * of reserved characters (`;/:@&=+$,`; unlike decodeURI, `%23` and `%3F` give `#` and `?`, as earlier versions
+     * wrote them in file names), and keeps malformed ones as they are.
      */
     fun decodeUri(s: String): String {
         if (s.indexOf('%') < 0) return s
@@ -166,11 +155,13 @@ object Hrefs {
         return UriPath(server, segments, windows)
     }
 
-    /** href of machine [machineId] in [targetFile], as seen from [documentFile]. */
-    fun forFile(documentFile: String, targetFile: String, machineId: String): String =
-        "${encodeUri(relative(full(documentFile).parent.toString(), targetFile))}#$machineId"
+    /** The path of [targetFile] as a submachine state of [documentFile] holds it. */
+    fun forFile(documentFile: String, targetFile: String): String = relative(full(documentFile).parent.toString(), targetFile)
 
-    /** The file (full path) and element id an href points to, relative to [documentFile]. */
+    /** The full path of a submachine path of [documentFile]. */
+    fun resolvePath(documentFile: String, path: String): String = full(joinFull(full(documentFile).parent.toString(), path)).toString()
+
+    /** The file (full path) and element id an old file's href points to, relative to [documentFile]. */
     fun resolve(documentFile: String, href: String): Pair<String, String> {
         val hash = href.indexOf('#')
         val file = if (hash >= 0) href.substring(0, hash) else href
@@ -199,13 +190,13 @@ object SubmachineResolver {
         for (file in candidates) {
             if (Hrefs.samePath(file, documentFile)) continue
             val s = summaryOf(file) ?: continue
-            output.add(MachineInfo(Hrefs.forFile(documentFile, file, s.id), s.name, display(file), s.points))
+            output.add(MachineInfo(Hrefs.forFile(documentFile, file), s.name, display(file), s.points))
         }
         val collator = Collator.getInstance()
         return output.sortedWith { x, y -> collator.compare(x.name, y.name) }
     }
 
-    /** Reads the machines referenced by submachine states, to learn their names and connection points. */
+    /** Reads the machines referenced by submachine states (by path), to learn their names and connection points. */
     fun resolve(
         documentFile: String,
         model: FsmModel,
@@ -221,15 +212,15 @@ object SubmachineResolver {
                 continue
             }
             // Outside the project, or written with a different relative path.
-            val (file, id) = try {
-                Hrefs.resolve(documentFile, href)
+            val file = try {
+                Hrefs.resolvePath(documentFile, href)
             } catch (_: InvalidPathException) {
                 // Not a file path (characters a path can't hold): a machine that can't be found.
                 info[href] = SubmachineInfo(false)
                 continue
             }
             val s = summaryOf(file)
-            info[href] = if (s != null && s.id == id) SubmachineInfo(true, s.name, display(file), s.points) else SubmachineInfo(false)
+            info[href] = if (s != null) SubmachineInfo(true, s.name, display(file), s.points) else SubmachineInfo(false)
         }
         return info
     }

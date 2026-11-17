@@ -1,10 +1,11 @@
 package com.vincegosoftware.fsmeditor
 
 import com.intellij.ide.highlighter.XmlLikeFileType
-import com.intellij.ide.scratch.ScratchFileCreationHelper
+import com.intellij.json.JsonFileType
+import com.intellij.json.JsonLanguage
+import com.intellij.openapi.fileTypes.ex.FileTypeIdentifiableByVirtualFile
 import com.intellij.lang.xml.XMLLanguage
 import com.intellij.lang.xml.XMLParserDefinition
-import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -18,9 +19,7 @@ import com.intellij.openapi.wm.WindowManager
 import com.intellij.psi.FileViewProvider
 import com.intellij.psi.impl.source.xml.XmlFileImpl
 import com.intellij.psi.tree.IFileElementType
-import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.Hrefs
-import com.vincegosoftware.fsmeditor.core.Xmi
 import com.vincegosoftware.fsmeditor.editor.FsmFileEditor
 import java.awt.image.BufferedImage
 import java.io.IOException
@@ -33,15 +32,12 @@ object FsmIcons {
     val FILE: Icon = IconLoader.getIcon("/icons/fsm.svg", FsmIcons::class.java)
 }
 
-/**
- * The XML dialect of `*.fsm` files. A language of its own (rather than XML)
- * lists state machines in File › New › Scratch File.
- */
+/** The XML dialect of old `*.fsm` files (XMI), shown as XML in the Text tab. */
 object FsmLanguage : XMLLanguage(XMLLanguage.INSTANCE, "FSM") {
-    override fun getDisplayName() = "FSM State Machine"
+    override fun getDisplayName() = "FSM State Machine (XMI)"
 }
 
-/** Parses `*.fsm` files as XML. */
+/** Parses old `*.fsm` files as XML. */
 class FsmParserDefinition : XMLParserDefinition() {
     override fun getFileNodeType() = FILE
 
@@ -53,24 +49,32 @@ class FsmParserDefinition : XMLParserDefinition() {
 }
 
 /**
- * New FSM scratch files start with the same machine as File › New › State Machine,
- * in the diagram: without a caret offset the file opens in its first editor, not the text.
+ * `*.fsm` files: the model of a state machine, JSON, shown in the Text tab with the JSON editor and the format's
+ * schema (`FsmSchemas`). Its layout file, `*.fsm.layout`, is plain JSON.
  */
-class FsmScratchCreationHelper : ScratchFileCreationHelper() {
-    override fun prepareText(project: Project, context: Context, dataContext: DataContext): Boolean {
-        if (!context.text.isNullOrBlank()) return false
-        context.text = Xmi.toXmi(FsmModel.createDefault("StateMachine"))
-        context.caretOffset = -1
-        return true
-    }
-}
-
-/** `*.fsm` files: XMI documents, shown as XML in the Text tab. */
-object FsmFileType : XmlLikeFileType(FsmLanguage) {
+object FsmFileType : JsonFileType(JsonLanguage.INSTANCE) {
     override fun getName() = "FSM State Machine"
-    override fun getDescription() = "UML state machine (XMI)"
+    override fun getDescription() = "UML state machine"
     override fun getDefaultExtension() = "fsm"
     override fun getIcon(): Icon = FsmIcons.FILE
+}
+
+/** `*.fsm` files of earlier versions (XMI 2.5.1 with UML DI), told apart by their content: shown as XML in the Text tab. */
+object OldFsmFileType : XmlLikeFileType(FsmLanguage), FileTypeIdentifiableByVirtualFile {
+    override fun getName() = "FSM State Machine (XMI)"
+    override fun getDescription() = "UML state machine of an earlier version (XMI)"
+    override fun getDefaultExtension() = "fsm"
+    override fun getIcon(): Icon = FsmIcons.FILE
+
+    override fun isMyFileType(file: VirtualFile): Boolean {
+        if (file.isDirectory || !file.name.endsWith(".fsm", ignoreCase = true) || file.length == 0L) return false
+        return try {
+            val head = file.inputStream.use { it.readNBytes(64) }.toString(Charsets.UTF_8).trimStart('\uFEFF', ' ', '\t', '\r', '\n')
+            head.startsWith("<")
+        } catch (_: IOException) {
+            false
+        }
+    }
 }
 
 /** Opening state machine files in the diagram or as text. */
@@ -96,10 +100,12 @@ object FsmDocuments {
     fun isDiagramSelected(project: Project, file: VirtualFile): Boolean =
         FileEditorManagerEx.getInstanceEx(project).getSelectedEditor(file) is FsmFileEditor
 
-    /** Opens the machine a submachine href of [from] points to; false when the file doesn't exist. */
-    fun openHref(project: Project, from: VirtualFile, href: String): Boolean {
+    fun isLayout(file: VirtualFile?): Boolean = file != null && !file.isDirectory && file.name.endsWith(".fsm.layout", ignoreCase = true)
+
+    /** Opens the machine a submachine state of [from] references (its file path, relative to [from]); false when the file doesn't exist. */
+    fun openSubmachine(project: Project, from: VirtualFile, ref: String): Boolean {
         val path = try {
-            Hrefs.resolve(from.path, href).first
+            Hrefs.resolvePath(from.path, ref)
         } catch (_: InvalidPathException) {
             return false // not a file path: a file that doesn't exist
         }

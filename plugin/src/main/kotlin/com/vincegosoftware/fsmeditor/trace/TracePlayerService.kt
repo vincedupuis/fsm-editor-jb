@@ -24,7 +24,6 @@ import com.vincegosoftware.fsmeditor.core.TraceMachine
 import com.vincegosoftware.fsmeditor.core.TraceRead
 import com.vincegosoftware.fsmeditor.core.TraceSession
 import com.vincegosoftware.fsmeditor.core.TraceView
-import com.vincegosoftware.fsmeditor.core.Xmi
 import com.vincegosoftware.fsmeditor.editor.FsmFileEditor
 import com.vincegosoftware.fsmeditor.services.FsmWorkspace
 import com.vincegosoftware.fsmeditor.settings.FsmSettings
@@ -285,7 +284,8 @@ class TracePlayerService(private val project: Project) : Disposable {
                 val document = FileDocumentManager.getInstance().getCachedDocument(vf)
                 val key = if (document != null) "d${document.modificationStamp}" else "f${vf.modificationStamp}:${vf.timeStamp}"
                 parsed[vf.path]?.let { if (it.first == key) return@compute it.second }
-                val machine = TraceMachine(File(vf.path).absolutePath, Xmi.fromXmi(document?.text ?: VfsUtilCore.loadText(vf)))
+                // An open machine as its diagram shows it (unsaved changes included), with the ids reading its file gives.
+                val machine = TraceMachine.read(File(vf.path).absolutePath, document?.text ?: VfsUtilCore.loadText(vf)) ?: return@compute null
                 parsed[vf.path] = key to machine
                 machine
             } catch (e: ProcessCanceledException) {

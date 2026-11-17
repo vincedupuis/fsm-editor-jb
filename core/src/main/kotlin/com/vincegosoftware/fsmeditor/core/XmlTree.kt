@@ -7,6 +7,7 @@ import kotlin.math.log10
 import kotlin.math.sqrt
 
 /**
+ * The XML reader of files of earlier versions (XMI, see [Xmi]): nothing writes XML any more.
  * A read-only XML element whose element and attribute names use canonical
  * prefixes for known namespace URIs, so documents using other prefixes read
  * the same (`uml:State` whatever prefix the file binds to the UML namespace).
@@ -28,25 +29,6 @@ class XmlElem(
 }
 
 class XmlParseException(message: String, val line: Int) : Exception("Line $line: $message")
-
-/** An element to write: name, attributes in order, and children (elements or text). */
-class XNode(var name: String, vararg attrs: Pair<String, Any?>) {
-    val attrs: MutableList<Pair<String, Any?>> = attrs.toMutableList()
-    /** Child [XNode]s or strings. */
-    val children = ArrayList<Any>()
-
-    /** Adds children: nodes, strings, or collections of nodes (null is skipped). */
-    fun add(vararg items: Any?): XNode {
-        for (c in items) {
-            when (c) {
-                null -> {}
-                is Iterable<*> -> c.forEach { if (it != null) children.add(it) }
-                else -> children.add(c)
-            }
-        }
-        return this
-    }
-}
 
 object XmlTree {
     /**
@@ -251,59 +233,6 @@ object XmlTree {
         for (c in raw.children) el.children.add(resolve(c, s, canonical))
         return el
     }
-
-    fun escape(s: String): String {
-        val sb = StringBuilder(s.length)
-        for (c in s) {
-            when (c) {
-                '&' -> sb.append("&amp;")
-                '<' -> sb.append("&lt;")
-                '>' -> sb.append("&gt;")
-                '"' -> sb.append("&quot;")
-                '\r' -> sb.append("&#13;")
-                '\n' -> sb.append("&#10;")
-                '\t' -> sb.append("&#9;")
-                else -> sb.append(c)
-            }
-        }
-        return sb.toString()
-    }
-
-    /** Writes the document with two-space indentation and LF line ends. */
-    fun write(root: XNode): String {
-        val output = StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-        writeNode(root, "", output)
-        return output.toString()
-    }
-
-    private fun writeNode(node: XNode, indent: String, output: StringBuilder) {
-        output.append(indent).append('<').append(node.name)
-        for ((key, value) in node.attrs) {
-            val s = formatValue(value)
-            if (s.isNullOrEmpty()) continue
-            output.append(' ').append(key).append("=\"").append(escape(s)).append('"')
-        }
-        val only = node.children.singleOrNull()
-        if (node.children.isEmpty()) {
-            output.append("/>\n")
-        } else if (only is String) {
-            output.append('>').append(escape(only).replace("&#10;", "\n")).append("</").append(node.name).append(">\n")
-        } else {
-            output.append(">\n")
-            for (c in node.children) {
-                if (c is XNode) writeNode(c, "$indent  ", output)
-                else output.append(indent).append("  ").append(escape(c.toString())).append('\n')
-            }
-            output.append(indent).append("</").append(node.name).append(">\n")
-        }
-    }
-
-    private fun formatValue(value: Any?): String? = when (value) {
-        null -> null
-        is Double -> Num.format(value)
-        is String -> value
-        else -> value.toString()
-    }
 }
 
 /** Number helpers matching how the diagram and the files have always printed coordinates. */
@@ -350,6 +279,10 @@ object Num {
         val (digits, point) = shortestDigits(n)
         return layout(digits, point)
     }
+
+    /** JavaScript's `String(n)`, `NaN` and `Infinity` included. */
+    fun js(n: Double): String =
+        if (n.isNaN()) "NaN" else if (n == Double.POSITIVE_INFINITY) "Infinity" else if (n == Double.NEGATIVE_INFINITY) "-Infinity" else format(n)
 
     /**
      * Shortest digits (no trailing zero) such that 0.digits × 10^point reads back as [n] (> 0),

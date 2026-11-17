@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # Copies the `fsm` code generator, with its templates, into plugin/cli/<platform>/
 # so the plugin bundles it (plugin/cli is gitignored). <platform> is darwin-arm64,
-# darwin-x64, linux-arm64, linux-x64 or windows-x64.
+# darwin-x64, linux-arm64, linux-x64 or windows-x64. Also copies the JSON Schema of
+# the model file into plugin/cli/schemas (bundled: the text editor checks .fsm files
+# against it) and fsm-cli's test cases into plugin/cli/cases (the core tests check
+# the reader and validator against them; not bundled).
 #
 # fsm is the program of fsm-cli (github.com/vincedupuis/fsm-cli). It is taken from:
 #   - a clone of fsm-cli (by default the sibling ../fsm-cli): its target/release/fsm
 #     (under $CARGO_TARGET_DIR when set) and templates/, for this machine's platform;
 #   - or a folder of unpacked fsm-cli release archives, fsm-<version>-<platform>/
-#     each holding fsm (fsm.exe on Windows) and templates/: the newest version found.
+#     each holding fsm (fsm.exe on Windows) and templates/: the newest version found,
+#     with schemas/ and cases/ unpacked from fsm-schemas-<version>.tar.gz and
+#     fsm-cases-<version>.tar.gz beside them.
 #
 # Usage: scripts/fetch-cli.sh [--all] [--build] [path to a clone of fsm-cli, or to a folder of release archives]
 #   (default)  only the platform of this machine
@@ -59,7 +64,9 @@ if [ -f "$src/Cargo.toml" ]; then
   mkdir -p "$out/$host"
   cp "$exe" "$out/$host/"
   cp -R "$src/templates" "$out/$host/templates"
-  echo "Copied $exe and its templates to plugin/cli/$host"
+  cp -R "$src/schemas" "$out/schemas"
+  cp -R "$src/tests/cases" "$out/cases"
+  echo "Copied $exe and its templates to plugin/cli/$host, the schemas and the test cases to plugin/cli"
   exit 0
 fi
 
@@ -86,4 +93,13 @@ for p in $platforms; do
   cp "$dist/$exe" "$out/$p/"
   cp -R "$dist/templates" "$out/$p/templates"
   echo "Copied fsm $version ($p) to plugin/cli/$p"
+done
+for part in schemas cases; do
+  if [ -d "$src/$part" ]; then
+    cp -R "$src/$part" "$out/$part"
+    echo "Copied $part to plugin/cli/$part"
+  else
+    echo "No $part/ in $src: unpack fsm-$part-$version.tar.gz there." >&2
+    exit 1
+  fi
 done

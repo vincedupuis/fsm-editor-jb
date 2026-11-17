@@ -28,6 +28,8 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
-    // The tests read the shared examples.
+    // The tests read the shared examples, and fsm-cli's test cases and schemas (copied into plugin/cli by scripts/fetch-cli.sh).
     systemProperty("fsm.examples", rootProject.file("examples").absolutePath)
+    systemProperty("fsm.cases", rootProject.file("plugin/cli/cases").absolutePath)
+    systemProperty("fsm.schemas", rootProject.file("plugin/cli/schemas").absolutePath)
 }

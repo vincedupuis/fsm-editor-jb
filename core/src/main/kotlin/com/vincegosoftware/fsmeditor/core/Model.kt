@@ -1,8 +1,11 @@
 package com.vincegosoftware.fsmeditor.core
 
 /*
- * In-memory UML state machine model. Files store it as XMI with UML DI
- * (see Xmi); the diagram editor works on this form.
+ * In-memory UML state machine model. Files store it as JSON, the model and its
+ * layout in two files (see Format; files of earlier versions are XMI, see Xmi);
+ * the diagram editor works on this form, with absolute coordinates. Ids are
+ * derived from the names when a file is read; the editor makes its own for the
+ * elements it creates.
  *
  * The hierarchy is flat: every vertex points to its owner through
  * Vertex.parent, which is either a region id (root region of the machine or a
@@ -127,7 +130,7 @@ object ElementColors {
      */
     val ITEM_KEYS = listOf(
         "background", "entry", "exit", "doActivity", "deferrable", "invariant",
-        "triggers", "guard", "effect", "precondition", "postcondition",
+        "triggers", "guard", "action", "precondition", "postcondition",
     )
 
     /** Colors offered by the properties panel, readable on light and dark backgrounds. */
@@ -184,22 +187,24 @@ class Vertex(
 ) {
     // state
     var regions: MutableList<Region> = mutableListOf()
-    var regionLayout: RegionLayout = RegionLayout.Vertical
+    /** How the regions of an orthogonal state are arranged; null when never set (stacked). */
+    var regionLayout: RegionLayout? = null
     var entry: String = ""
     var exit: String = ""
     var doActivity: String = ""
     var deferrable: MutableList<String> = mutableListOf()
     var invariant: String = ""
-    /** Submachine state: XMI href of the referenced state machine, e.g. `Payment.fsm#sm`. */
+    /** Submachine state: path of the referenced state machine's file, relative to this one, e.g. `Payment.fsm`. */
     var submachine: String = ""
     var stereotype: String = ""
 
-    // connectionPointRef: xmi:id of the entry/exit point, inside the submachine's file
+    // connectionPointRef: name of the entry/exit point in the submachine's file
     var ref: String = ""
     var pointKind: PointKind = PointKind.Entry
 
     // comment
     var text: String = ""
+    /** Ids of the annotated vertices and transitions (references that name nothing: see [Format]). */
     var anchors: MutableList<String> = mutableListOf()
 
     /** Diagram color, `#rrggbb`, or empty for the default (see [ElementColors]). */
@@ -246,7 +251,7 @@ class Transition(
 ) {
     var triggers: MutableList<String> = mutableListOf()
     var guard: String = ""
-    var effect: String = ""
+    var action: String = ""
     /** Protocol state machines only. */
     var precondition: String = ""
     var postcondition: String = ""
@@ -263,7 +268,7 @@ class Transition(
         val t = Transition(id, source, target, kind)
         t.triggers = triggers.toMutableList()
         t.guard = guard
-        t.effect = effect
+        t.action = action
         t.precondition = precondition
         t.postcondition = postcondition
         t.points = points.toMutableList()
@@ -287,10 +292,8 @@ class FsmModel {
 
     fun copy(): FsmModel {
         val m = FsmModel()
-        m.id = id
         m.name = name
         m.kind = kind
-        m.context = context
         m.documentation = documentation
         m.regions = regions.mapTo(mutableListOf()) { it.copy() }
         m.vertices = vertices.mapTo(mutableListOf()) { it.copy() }
@@ -300,7 +303,6 @@ class FsmModel {
 
     /** Fills in defaults so partially specified models are safe to use. */
     fun normalize(): FsmModel {
-        if (id.isEmpty()) id = "sm"
         if (regions.isEmpty()) regions.add(Region("r_root"))
         normalizeGroups()
         val types = vertices.associate { it.id to it.type }
@@ -343,22 +345,21 @@ class FsmModel {
         for (v in vertices) if (v.group.isNotEmpty() && counts.getValue(v.group) < 2) v.group = ""
     }
 
-    /** Entry/exit points owned by the state machine itself (placed in a top-level region). */
+    /** Entry/exit points owned by the state machine itself (placed in a top-level region), by name: the machines using it refer to them by name. */
     fun machineConnectionPoints(): List<ConnectionPointInfo> {
         val top = regions.map { it.id }.toSet()
         return vertices
             .filter { (it.type == VertexType.EntryPoint || it.type == VertexType.ExitPoint) && it.parent in top }
-            .map { ConnectionPointInfo(it.id, it.name, if (it.type == VertexType.EntryPoint) PointKind.Entry else PointKind.Exit) }
+            .map { ConnectionPointInfo(it.name, it.name, if (it.type == VertexType.EntryPoint) PointKind.Entry else PointKind.Exit) }
     }
 
     companion object {
         fun createDefault(name: String = "StateMachine"): FsmModel {
             val m = FsmModel()
-            m.id = "sm"
             m.name = name
             m.regions.add(Region("r_root"))
             m.vertices.add(Vertex("v_init", VertexType.Initial, "", "r_root", 60.0, 80.0, 20.0, 20.0))
-            m.vertices.add(Vertex("v_idle", VertexType.State, "Idle", "r_root", 160.0, 60.0, 140.0, 60.0))
+            m.vertices.add(Vertex("v_idle", VertexType.State, if (name == "Idle") "Idle1" else "Idle", "r_root", 160.0, 60.0, 140.0, 60.0))
             m.transitions.add(Transition("t_init", "v_init", "v_idle"))
             return m
         }
@@ -369,7 +370,7 @@ class ConnectionPointInfo(val id: String, val name: String, val kind: PointKind)
 
 /** A state machine found in the project that submachine states can reference. */
 class MachineInfo(
-    /** href relative to the referencing file, e.g. `Payment.fsm#sm`. */
+    /** Path relative to the referencing file, e.g. `Payment.fsm`. */
     val href: String,
     val name: String,
     /** Path shown to the user (relative to the project when possible). */

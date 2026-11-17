@@ -305,8 +305,8 @@ object TraceFormats {
         val output = mutableListOf(builtIn)
         if (settingJson.isNullOrBlank()) return output
         val specs = try {
-            Json.parse(settingJson)
-        } catch (e: Json.FormatException) {
+            PlainJson.parse(settingJson)
+        } catch (e: PlainJson.FormatException) {
             errors?.add("The trace formats setting is not valid JSON: ${e.message}")
             return output
         }
@@ -607,7 +607,19 @@ class TraceMachine(
     val file: String,
     val model: FsmModel,
     val index: ModelIndex = ModelIndex(model),
-)
+    /** Read from a file of an earlier version (XMI): its submachines are hrefs. */
+    val old: Boolean = false,
+) {
+    companion object {
+        /** The machine of a file's text, in either format (its ids are those reading the file gives); null when it can't be read. */
+        fun read(file: String, text: String): TraceMachine? =
+            try {
+                TraceMachine(file, Load.loadModel(text), old = Format.isOldFormat(text))
+            } catch (_: LoadException) {
+                null
+            }
+    }
+}
 
 /** A log opened in the Trace Player. */
 class TraceLog internal constructor(
@@ -988,12 +1000,11 @@ class TraceSession {
                 problem("${machine.model.name} has no submachine state '$seg' ($path).")
                 return null
             }
-            val file = state.submachine.substringBefore('#')
+            val file = Load.submachineFiles(FsmModel().also { it.vertices.add(state) }, machine.old)[0]
             // Not a file path: a submachine that can't be read.
-            val resolved = try { Hrefs.resolve(machine.file, state.submachine) } catch (_: InvalidPathException) { null }
-            val id = resolved?.second.orEmpty().ifEmpty { "sm" }
-            val sub = resolved?.let { machine(it.first) }
-            if (sub == null || sub.model.id.ifEmpty { "sm" } != id) {
+            val resolved = try { Hrefs.resolvePath(machine.file, file) } catch (_: InvalidPathException) { null }
+            val sub = resolved?.let { machine(it) }
+            if (sub == null) {
                 problem("The submachine of ${machine.model.name}.${state.name.ifEmpty { seg }} ($file) cannot be read ($path).")
                 return null
             }

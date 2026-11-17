@@ -82,7 +82,7 @@ class DiagramSession(model: FsmModel) {
     }
 
     fun uniqueName(baseName: String): String {
-        val names = model.vertices.map { it.name }.toSet()
+        val names = usedNames(null)
         if (baseName !in names) return baseName
         var i = 2
         while (true) {
@@ -91,13 +91,67 @@ class DiagramSession(model: FsmModel) {
         }
     }
 
+    // Names are the elements' identity in the file: unique in the machine (the machine's, the elements', the regions'
+    // of an owner with several), unique on their state for points. A name ending with * is generated (saving gives
+    // one to what has none) and isn't shown.
+
+    private fun isNamed(t: VertexType) =
+        t == VertexType.State || t == VertexType.Choice || t == VertexType.Junction || t == VertexType.Fork || t == VertexType.Join ||
+            t == VertexType.Final || t == VertexType.Terminate || t == VertexType.Comment
+
+    /** The names in use in the machine, but those of [except] (an element or a region). */
+    fun usedNames(except: Any?): Set<String> {
+        val names = hashSetOf(model.name)
+        fun regions(list: List<Region>) {
+            if (list.size < 2) return
+            for (r in list) if (r !== except && r.name.isNotEmpty()) names.add(r.name)
+        }
+        regions(model.regions)
+        for (v in model.vertices) {
+            if (v !== except && isNamed(v.type) && v.name.isNotEmpty()) names.add(v.name)
+            regions(v.regions)
+        }
+        return names
+    }
+
+    /**
+     * The check of a name typed for [e] (a [Vertex], a [Region], or the [FsmModel] itself): no spaces, '.' or '*',
+     * unique. An empty name gives the element a generated one when it is saved (the machine needs a name). The value
+     * is the name to set.
+     */
+    fun nameCheck(e: Any, value: String?): Check<String> {
+        val n = JsWhitespace.trim(value ?: "")
+        if (n.any { it == '.' || it == '*' || it in JsWhitespace }) return Check.fail("A name can't contain spaces, '.' or '*'.")
+        if (n.isEmpty()) return if (e === model) Check.fail("The state machine needs a name.") else Check.success("")
+        val current = when (e) {
+            is Vertex -> e.name
+            is Region -> e.name
+            else -> model.name
+        }
+        if (n == Format.shown(current)) return Check.success(n)
+        if (e is Vertex && (e.type == VertexType.EntryPoint || e.type == VertexType.ExitPoint)) {
+            val owner = index.vertex(e.parent)
+            val mates = model.vertices.filter { q ->
+                q !== e && (q.type == VertexType.EntryPoint || q.type == VertexType.ExitPoint) &&
+                    (if (owner != null) q.parent == owner.id else index.vertex(q.parent) == null)
+            }
+            val reserved = n == "history" || n == "deepHistory"
+            if (mates.any { it.name == n } || reserved) {
+                return Check.fail("'$n' can't name this point: ${if (reserved) "it names history pseudostates" else "another point of its state has it"}.")
+            }
+            return Check.success(n)
+        }
+        if (n in usedNames(if (e === model) null else e) && !(e === model && n == model.name)) return Check.fail("'$n' is already used in this state machine: names are unique.")
+        return Check.success(n)
+    }
+
     /** Display name of the machine a submachine href points to. */
     fun machineLabel(href: String?): String {
         val info = submachines[href ?: ""]
         if (info != null && info.name.isNotEmpty()) return info.name
         val known = machines.firstOrNull { it.href == href }
         if (known != null && known.name.isNotEmpty()) return known.name
-        var file = Hrefs.decodeUri((href ?: "").split('#')[0])
+        var file = href ?: ""
         file = file.substring(file.lastIndexOf('/') + 1)
         return if (file.endsWith(".fsm")) file.substring(0, file.length - 4) else file
     }
@@ -166,6 +220,13 @@ class DiagramSession(model: FsmModel) {
             v.y = Geometry.snap(p.y - v.h / 2)
             val r = Geometry.regionAt(index, p, emptySet())
             v.parent = r?.id ?: rootRegion
+            // A region has one initial, one shallow and one deep history pseudostate at most (the file holds one).
+            if ((v.type == VertexType.Initial || v.type == VertexType.ShallowHistory || v.type == VertexType.DeepHistory) &&
+                model.vertices.any { it.parent == v.parent && it.type == v.type }
+            ) {
+                say("This region already has ${if (v.type == VertexType.Initial) "an initial pseudostate" else "a ${v.type.title.lowercase()}"}.")
+                return null
+            }
         }
         model.vertices.add(v)
         reindex()
@@ -248,7 +309,7 @@ class DiagramSession(model: FsmModel) {
     fun addInternalTransition(state: Vertex) {
         val t = Transition(newId("t"), state.id, state.id, TransitionKind.Internal)
         t.triggers = mutableListOf("event")
-        t.effect = "action()"
+        t.action = "action()"
         model.transitions.add(t)
         commit()
     }
@@ -260,7 +321,10 @@ class DiagramSession(model: FsmModel) {
         model.transitions = model.transitions
             .filterTo(mutableListOf()) { it.id !in transitionIds && it.source !in ids && it.target !in ids }
         val alive = (model.vertices.map { it.id } + model.transitions.map { it.id }).toSet()
-        for (v in model.vertices) v.anchors = v.anchors.filterTo(mutableListOf()) { it in alive }
+        // An anchor that named nothing in the file (U+E001/U+E002 and its reference) is kept as it is.
+        for (v in model.vertices) {
+            v.anchors = v.anchors.filterTo(mutableListOf()) { it in alive || it.startsWith(Format.UNRESOLVED) || it.startsWith(Format.UNRESOLVED_ANCHOR) }
+        }
         selection = selection.filterTo(LinkedHashSet()) { it in alive }
         reindex()
     }
@@ -320,8 +384,8 @@ class DiagramSession(model: FsmModel) {
         return t
     }
 
-    /** Why a transition can't go from [source] to [target], or null when it can. */
-    private fun connectProblem(source: Vertex, target: Vertex): String? = when {
+    /** Why a transition can't go from [source] to [target], or null when it can ([moving]: the transition being reconnected). */
+    private fun connectProblem(source: Vertex, target: Vertex, moving: Transition? = null): String? = when {
         source.type == VertexType.ConnectionPointRef && source.pointKind == PointKind.Entry ->
             "An entry reference only receives transitions; execution continues inside the submachine."
         target.type == VertexType.ConnectionPointRef && target.pointKind == PointKind.Exit ->
@@ -329,6 +393,9 @@ class DiagramSession(model: FsmModel) {
         source.type == VertexType.Final || source.type == VertexType.Terminate ->
             "A ${source.type.title.lowercase()} cannot have outgoing transitions."
         target.type == VertexType.Initial -> "An initial pseudostate cannot be the target of a transition."
+        (source.type == VertexType.Initial || source.type == VertexType.ShallowHistory || source.type == VertexType.DeepHistory) &&
+            model.transitions.any { it.source == source.id && it !== moving } ->
+            "A${if (source.type == VertexType.Initial) "n initial pseudostate" else " history pseudostate"} has one transition only."
         else -> null
     }
 
@@ -340,7 +407,7 @@ class DiagramSession(model: FsmModel) {
         if ((if (atSource) t.source else t.target) == v.id) return
         val source = if (atSource) v else (index.vertex(t.source) ?: return)
         val target = if (atSource) (index.vertex(t.target) ?: return) else v
-        connectProblem(source, target)?.let {
+        connectProblem(source, target, t)?.let {
             say(it)
             return
         }
@@ -953,7 +1020,7 @@ class DiagramSession(model: FsmModel) {
     fun overlapIssues(): List<Issue> {
         val output = ArrayList<Issue>()
         val vs = model.vertices.filter { it.type != VertexType.Comment }
-        fun describe(v: Vertex) = if (v.name.isNotEmpty()) "'${v.name}'" else "an unnamed ${v.type.title}"
+        fun describe(v: Vertex) = if (Format.shown(v.name).isNotEmpty()) "'${v.name}'" else "a ${v.type.title.lowercase()}"
         for (i in vs.indices) {
             val a = vs[i]
             for (j in i + 1 until vs.size) {
@@ -1191,7 +1258,10 @@ class DiagramSession(model: FsmModel) {
             if (v.group.isNotEmpty()) v.group = groups.getOrPut(v.group) { newId("g") }
             v.x += offX
             v.y += offY
-            v.regions = v.regions.mapTo(mutableListOf()) { Region(map[it.id]!!, it.name, it.size) }
+            // Names are unique: a copy takes the next free one (Idle2); a generated one is given again when saved.
+            fun fresh(n: String) = if (n.isEmpty() || Format.isGenerated(n)) "" else uniqueName(n)
+            if (isNamed(v.type)) v.name = fresh(v.name)
+            v.regions = v.regions.mapTo(mutableListOf()) { Region(map[it.id]!!, fresh(it.name), it.size) }
             val parent = map[v.parent]
             if (parent != null) {
                 v.parent = parent

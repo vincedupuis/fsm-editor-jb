@@ -21,9 +21,10 @@ import com.vincegosoftware.fsmeditor.codegen.CodeGeneration
 import com.vincegosoftware.fsmeditor.core.DiagramSession
 import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.SvgExport
-import com.vincegosoftware.fsmeditor.core.XmiException
-import com.vincegosoftware.fsmeditor.core.XmlParseException
-import com.vincegosoftware.fsmeditor.core.Xmi
+import com.vincegosoftware.fsmeditor.core.Load
+import com.vincegosoftware.fsmeditor.core.LoadException
+import com.vincegosoftware.fsmeditor.core.MachineFiles
+import com.vincegosoftware.fsmeditor.editor.DiagramDiffViewer
 import com.vincegosoftware.fsmeditor.editor.FsmFileEditor
 import java.io.IOException
 
@@ -70,20 +71,17 @@ class ExportSvgAction : FsmFileAction() {
         val project = e.project ?: return
         val file = fileOf(e) ?: return
         val text = FileDocumentManager.getInstance().getDocument(file)?.text ?: return
+        val layout = file.parent?.findChild(file.name + ".layout")?.let { FileDocumentManager.getInstance().getDocument(it)?.text }
         val model = try {
-            if (text.isBlank()) FsmModel.createDefault(file.nameWithoutExtension) else Xmi.fromXmi(text)
-        } catch (ex: XmlParseException) {
-            Messages.showErrorDialog(project, "${file.name} is not a readable state machine: ${ex.message}", "Export as SVG")
-            return
-        } catch (ex: XmiException) {
+            Load.loadModel(text, layout)
+        } catch (ex: LoadException) {
             Messages.showErrorDialog(project, "${file.name} is not a readable state machine: ${ex.message}", "Export as SVG")
             return
         }
         val session = DiagramSession(model)
         (e.getData(PlatformDataKeys.FILE_EDITOR) as? FsmFileEditor)?.let { editor ->
             // Names of submachines as the open diagram knows them.
-            val open = editor.component as? com.vincegosoftware.fsmeditor.editor.EditorPanel
-            open?.session?.let {
+            editor.pane.panel.session?.let {
                 session.submachines = it.submachines
                 session.machines = it.machines
             }
@@ -120,6 +118,13 @@ class OpenAsTextAction : FsmFileAction() {
     }
 }
 
+/** "Compare as Diagrams": the file and its version in Git, as two diagrams side by side. */
+class CompareAsDiagramsAction : FsmFileAction() {
+    override fun actionPerformed(e: AnActionEvent) {
+        DiagramDiffViewer.compare(e.project ?: return, fileOf(e) ?: return)
+    }
+}
+
 class OpenInDiagramAction : FsmFileAction() {
     override fun isApplicable(e: AnActionEvent): Boolean = e.getData(PlatformDataKeys.FILE_EDITOR) !is FsmFileEditor
 
@@ -128,7 +133,7 @@ class OpenInDiagramAction : FsmFileAction() {
     }
 }
 
-/** File › New › State Machine: a new .fsm file with an initial pseudostate and one state. */
+/** File › New › State Machine: a new machine (its .fsm and .fsm.layout files) with an initial pseudostate and one state. */
 class NewStateMachineAction : DumbAwareAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
@@ -154,8 +159,10 @@ class NewStateMachineAction : DumbAwareAction() {
     private fun create(project: Project, folder: VirtualFile, name: String): VirtualFile? =
         try {
             WriteCommandAction.writeCommandAction(project).withName("New State Machine").compute<VirtualFile, IOException> {
+                val files = MachineFiles.write(FsmModel.createDefault(name))
                 val file = folder.createChildData(this, "$name.fsm")
-                VfsUtil.saveText(file, Xmi.toXmi(FsmModel.createDefault(name)))
+                VfsUtil.saveText(file, files.modelText)
+                VfsUtil.saveText(folder.findChild("$name.fsm.layout") ?: folder.createChildData(this, "$name.fsm.layout"), files.layoutText ?: "")
                 file
             }
         } catch (ex: IOException) {
@@ -164,11 +171,13 @@ class NewStateMachineAction : DumbAwareAction() {
         }
 }
 
-/** Accepts the name of a new state machine whose file doesn't exist yet in [folder]. */
-class MachineNameValidator(private val folder: VirtualFile) : InputValidatorEx {
+/** Accepts the name of a new state machine whose file doesn't exist yet in [folder], and that none of [namesInside] has. */
+class MachineNameValidator(private val folder: VirtualFile, private val namesInside: Set<String> = emptySet()) : InputValidatorEx {
     override fun getErrorText(inputString: String): String? {
         val name = inputString.trim()
-        if (!Regex("^[\\w .-]+$").matches(name)) return "Use letters, digits, spaces, dots, dashes or underscores."
+        // \w as in the VS Code edition: ASCII letters, digits and _ (a name has no spaces or dots).
+        if (!Regex("^[A-Za-z0-9_-]+$").matches(name)) return "Use letters, digits, dashes or underscores."
+        if (name in namesInside) return "An element of the new machine is named $name: names are unique in a machine."
         if (folder.findChild("$name.fsm") != null) return "$name.fsm already exists."
         return null
     }

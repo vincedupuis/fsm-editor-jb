@@ -16,7 +16,7 @@ object ClipboardJson {
         o.raw("regions", "[" + v.regions.joinToString(",") { r ->
             JsonObjectWriter().str("id", r.id).str("name", r.name).also { w -> r.size?.let { w.num("size", it) } }.toString()
         } + "]")
-        if (v.regions.size > 1) o.str("regionLayout", if (v.regionLayout == RegionLayout.Horizontal) "horizontal" else "vertical")
+        v.regionLayout?.let { o.str("regionLayout", if (it == RegionLayout.Horizontal) "horizontal" else "vertical") }
         o.opt("entry", v.entry).opt("exit", v.exit).opt("doActivity", v.doActivity).opt("invariant", v.invariant)
             .opt("submachine", v.submachine).opt("stereotype", v.stereotype)
         if (v.deferrable.isNotEmpty()) o.raw("deferrable", stringArray(v.deferrable))
@@ -30,7 +30,7 @@ object ClipboardJson {
     private fun writeTransition(t: Transition): String {
         val o = JsonObjectWriter()
         o.str("id", t.id).str("source", t.source).str("target", t.target).str("kind", t.kind.key)
-            .raw("triggers", stringArray(t.triggers)).str("guard", t.guard).str("effect", t.effect)
+            .raw("triggers", stringArray(t.triggers)).str("guard", t.guard).str("action", t.action)
             .opt("precondition", t.precondition).opt("postcondition", t.postcondition)
         if (t.points.isNotEmpty()) {
             o.raw("points", "[" + t.points.joinToString(",") { JsonObjectWriter().num("x", it.x).num("y", it.y).toString() } + "]")
@@ -64,11 +64,11 @@ object ClipboardJson {
         private val parts = ArrayList<String>()
 
         fun raw(key: String, json: String): JsonObjectWriter {
-            parts.add(Json.quote(key) + ":" + json)
+            parts.add(PlainJson.quote(key) + ":" + json)
             return this
         }
 
-        fun str(key: String, value: String?) = raw(key, Json.quote(value ?: ""))
+        fun str(key: String, value: String?) = raw(key, PlainJson.quote(value ?: ""))
 
         fun opt(key: String, value: String?) = if (value.isNullOrEmpty()) this else str(key, value)
 
@@ -80,8 +80,8 @@ object ClipboardJson {
     /** Reads clipboard text; null when it isn't copied diagram elements. */
     fun tryRead(text: String?): ClipboardFragment? {
         val root = try {
-            Json.parse(text ?: "")
-        } catch (_: Json.FormatException) {
+            PlainJson.parse(text ?: "")
+        } catch (_: PlainJson.FormatException) {
             return null
         }
         if (root !is Map<*, *> || !root.containsKey("fsmClipboard")) return null
@@ -90,7 +90,11 @@ object ClipboardJson {
             val type = VertexType.parseKey(str(item, "type")) ?: continue
             val v = Vertex(str(item, "id"), type, str(item, "name"), str(item, "parent"), dbl(item, "x"), dbl(item, "y"), dbl(item, "w", 40.0), dbl(item, "h", 40.0))
             v.regions = list(item, "regions").filterIsInstance<Map<*, *>>().mapTo(mutableListOf()) { Region(str(it, "id"), str(it, "name"), it["size"] as? Double) }
-            v.regionLayout = if (str(item, "regionLayout") == "horizontal") RegionLayout.Horizontal else RegionLayout.Vertical
+            v.regionLayout = when (str(item, "regionLayout")) {
+                "horizontal" -> RegionLayout.Horizontal
+                "vertical" -> RegionLayout.Vertical
+                else -> null
+            }
             v.entry = str(item, "entry")
             v.exit = str(item, "exit")
             v.doActivity = str(item, "doActivity")
@@ -116,7 +120,8 @@ object ClipboardJson {
             val t = Transition(str(item, "id"), str(item, "source"), str(item, "target"), kind)
             t.triggers = list(item, "triggers").filterIsInstance<String>().toMutableList()
             t.guard = str(item, "guard")
-            t.effect = str(item, "effect")
+            // Copied by an earlier version: its action was called effect.
+            t.action = if (item.containsKey("action")) str(item, "action") else str(item, "effect")
             t.precondition = str(item, "precondition")
             t.postcondition = str(item, "postcondition")
             t.points = list(item, "points").filterIsInstance<Map<*, *>>().mapTo(mutableListOf()) { PointD(dbl(it, "x"), dbl(it, "y")) }
@@ -141,7 +146,7 @@ object ClipboardJson {
 }
 
 /** Minimal JSON: objects become maps, arrays lists, numbers doubles. */
-object Json {
+object PlainJson {
     class FormatException(message: String) : Exception(message)
 
     fun parse(text: String): Any? = Reader(text).readDocument()

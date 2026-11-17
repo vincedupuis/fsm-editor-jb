@@ -32,12 +32,8 @@ object Validation {
             return if (!n.isNullOrEmpty()) "'$n'" else "'$href'"
         }
 
-        // Identity (a region id used again can also put a state inside its own region)
         val allRegions = model.regions + model.vertices.flatMap { it.regions }
-        val seen = HashSet<String>()
-        for (id in model.vertices.map { it.id } + model.transitions.map { it.id } + allRegions.map { it.id }) {
-            if (!seen.add(id)) add(id, Severity.Error, "Duplicate id '$id'.")
-        }
+        checkNames(model, ix, ::add)
 
         // Containment
         for (v in model.vertices) {
@@ -46,7 +42,7 @@ object Validation {
                 val owner = ix.vertex(v.parent)
                 val machineLevel = model.regions.any { it.id == v.parent }
                 if (machineLevel) {
-                    if (v.name.isEmpty()) add(v.id, Severity.Warning, "Connection points of the state machine need a name so submachine states can reference them.")
+                    // The machine's own connection point.
                 } else if (owner == null || owner.type != VertexType.State) {
                     add(v.id, Severity.Error, "${name(v)}: entry and exit points belong on the border of a state or at the top level of the state machine.")
                 } else if (owner.submachine.isNotEmpty()) {
@@ -95,14 +91,6 @@ object Validation {
             }
         }
 
-        // Names unique within a region
-        val byRegion = HashMap<String, HashSet<String>>()
-        for (v in model.vertices) {
-            if (v.type != VertexType.State || v.name.isEmpty()) continue
-            val names = byRegion.getOrPut(v.parent) { HashSet() }
-            if (!names.add(v.name)) add(v.id, Severity.Warning, "Another state named '${v.name}' exists in the same region.")
-        }
-
         fun checkReference(v: Vertex, outgoing: List<Transition>, incoming: List<Transition>) {
             val owner = ix.vertex(v.parent)
             val kind = v.pointKind
@@ -114,7 +102,7 @@ object Validation {
                 add(v.id, Severity.Error, "The connection point reference does not refer to an entry or exit point of the submachine.")
             } else if (owner != null && owner.submachine.isNotEmpty() && info != null && info.found) {
                 if (target == null) {
-                    add(v.id, Severity.Error, "${machineName(owner.submachine)} has no entry or exit point with id '${v.ref}'.")
+                    add(v.id, Severity.Error, "${machineName(owner.submachine)} has no entry or exit point named '${v.ref}'.")
                 } else if (target.kind != kind) {
                     val targetKind = if (target.kind == PointKind.Exit) "exit" else "entry"
                     add(v.id, Severity.Error, "$label is an $targetKind point of ${machineName(owner.submachine)}, but it is referenced as an $kindText point.")
@@ -149,7 +137,8 @@ object Validation {
             val incoming = ix.incoming(v.id).filter { it.kind != TransitionKind.Internal }
             when (v.type) {
                 VertexType.Initial -> {
-                    if (outgoing.size != 1) add(v.id, Severity.Error, "An initial pseudostate must have exactly one outgoing transition.")
+                    if (outgoing.isEmpty() || (outgoing.size == 1 && Format.unresolvedOf(outgoing[0].target) == "")) add(v.id, Severity.Error, "The initial pseudostate has no target.")
+                    else if (outgoing.size != 1) add(v.id, Severity.Error, "An initial pseudostate must have exactly one outgoing transition.")
                     if (incoming.isNotEmpty()) add(v.id, Severity.Error, "An initial pseudostate cannot have incoming transitions.")
                     for (t in outgoing) {
                         if (t.guard.isNotEmpty()) add(t.id, Severity.Error, "The transition leaving an initial pseudostate cannot have a guard.")
@@ -253,7 +242,13 @@ object Validation {
             val s = ix.vertex(t.source)
             val g = ix.vertex(t.target)
             if (s == null) add(t.id, Severity.Error, "Transition source '${t.source}' does not exist.")
-            if (g == null) add(t.id, Severity.Error, "Transition target '${t.target}' does not exist.")
+            if (g == null) {
+                val r = Format.unresolvedOf(t.target)
+                if (r == "") {
+                    // An initial without target is reported on the initial pseudostate.
+                    if (s?.type != VertexType.Initial) add(t.id, Severity.Error, "The default transition of a history pseudostate has no target.")
+                } else add(t.id, Severity.Error, "Transition target '${r ?: t.target}' does not exist.")
+            }
             if (s == null || g == null) continue
             if (s.type == VertexType.Comment || g.type == VertexType.Comment) {
                 add(t.id, Severity.Error, "Comments cannot be connected by transitions.")
@@ -273,7 +268,7 @@ object Validation {
                 }
             }
             if (protocol) {
-                if (t.effect.isNotEmpty()) add(t.id, Severity.Error, "Protocol transitions cannot have effects.")
+                if (t.action.isNotEmpty()) add(t.id, Severity.Error, "Protocol transitions cannot have actions.")
                 if (t.guard.isNotEmpty()) add(t.id, Severity.Warning, "Use a precondition instead of a guard in a protocol state machine.")
             } else if (t.precondition.isNotEmpty() || t.postcondition.isNotEmpty()) {
                 add(t.id, Severity.Warning, "Pre/postconditions only apply to protocol state machines and are ignored.")
@@ -289,6 +284,65 @@ object Validation {
         checkText(model, ix, ::add)
         checkReachability(model, ix, ::add)
         return issues
+    }
+
+    /**
+     * Names are the identity of elements in the file: the rules of a name, names unique in the machine (the machine's,
+     * the regions' when their owner has several, the elements'), point names unique on their owner.
+     */
+    private fun checkNames(model: FsmModel, ix: ModelIndex, add: (String, Severity, String) -> Unit) {
+        fun rules(id: String, n: String, label: String): Boolean {
+            if (n.isEmpty()) {
+                add(id, Severity.Error, "Every $label needs a name.")
+                return false
+            }
+            if ('.' in n) {
+                add(id, Severity.Error, "Name '$n' cannot contain '.'.")
+                return false
+            }
+            if (n.any { it in JsWhitespace }) {
+                add(id, Severity.Error, "Name '$n' cannot contain spaces.")
+                return false
+            }
+            if ('*' in n.substring(0, n.length - 1)) {
+                add(id, Severity.Error, "Name '$n' can contain '*' only as its last character.")
+                return false
+            }
+            return true
+        }
+        val names = HashSet<String>()
+        fun unique(id: String, n: String) {
+            if (n in names) add(id, Severity.Error, "Name '$n' is used more than once in the state machine.")
+            names.add(n)
+        }
+        if (rules("", model.name, "state machine")) unique("", model.name)
+        fun regionNames(regions: List<Region>) {
+            if (regions.size < 2) return
+            for (r in regions) if (rules(r.id, r.name, "region")) unique(r.id, r.name)
+        }
+        regionNames(model.regions)
+        val points = HashSet<String>()
+        for (v in model.vertices) {
+            when (v.type) {
+                VertexType.Initial, VertexType.ShallowHistory, VertexType.DeepHistory -> {}
+                VertexType.EntryPoint, VertexType.ExitPoint, VertexType.ConnectionPointRef -> {
+                    val reference = v.type == VertexType.ConnectionPointRef
+                    val n = if (reference) v.ref else v.name
+                    // A reference without a point is reported with the references.
+                    if ((reference && n.isEmpty()) || !rules(v.id, n, v.type.label)) continue
+                    val key = v.parent + "\u0000" + n
+                    if (n == "history" || n == "deepHistory") add(v.id, Severity.Error, "A point cannot be named '$n'.")
+                    else if (key in points) {
+                        val owner = ix.vertex(v.parent)
+                        add(v.id, Severity.Error, "${if (owner != null) name(owner) else "'${model.name}'"} has two points named '$n'.")
+                    } else points.add(key)
+                }
+                else -> {
+                    if (rules(v.id, v.name, v.type.label)) unique(v.id, v.name)
+                    regionNames(v.regions)
+                }
+            }
+        }
     }
 
     /** `'Name'`, or the kind of the vertex when it has no name. */
@@ -382,7 +436,7 @@ object Validation {
             val s = ix.vertex(t.source)
             for (trig in t.triggers) report(t.id, "Trigger", Expressions.checkTrigger(trig))
             report(t.id, "Guard", Expressions.checkGuard(t.guard, Labels.allowsElse(s)))
-            report(t.id, "Effect", Expressions.checkActions(t.effect))
+            report(t.id, "Action", Expressions.checkActions(t.action))
             report(t.id, "Precondition", Expressions.checkCondition(t.precondition))
             report(t.id, "Postcondition", Expressions.checkCondition(t.postcondition))
             if (t.triggers.any { Expressions.timeTriggerMs(it) != null } && s != null && s.type != VertexType.State) {

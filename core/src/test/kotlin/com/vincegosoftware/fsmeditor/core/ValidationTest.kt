@@ -207,15 +207,28 @@ class ValidationTest {
     }
 
     @Test
-    fun reportsARegionIdUsedAgainOnTheRegionId() {
+    fun namesAreUniqueInTheMachineFollowTheRulesAndPointsAreUniqueOnTheirState() {
         val b = machine()
-        val s = b.state("S", regions = 1)
-        b.state("T", "S_r0")
-        b.model.vertices.first { it.id == s }.regions[0].id = "r_root"
-        val u = b.state("U", regions = 1)
-        b.model.vertices.first { it.id == u }.regions[0].id = "A"
-        val dup = Validation.validate(b.model).filter { it.message.startsWith("Duplicate id") }.map { "${it.id}|${it.severity.key}|${it.message}" }
-        assertEquals(listOf("r_root|error|Duplicate id 'r_root'.", "A|error|Duplicate id 'A'."), dup)
+        b.state("S", regions = 2)
+        val regs = b.model.vertices.first { it.id == "S" }.regions
+        regs[0].name = "A"
+        regs[1].name = "r"
+        b.state("T.x", regs[1].id)
+        b.vertex(VertexType.EntryPoint, "S", "p1", "in")
+        b.vertex(VertexType.EntryPoint, "S", "p2", "in")
+        b.vertex(VertexType.ExitPoint, "S", "p3", "deepHistory")
+        b.vertex(VertexType.Choice, "r_root", "c", "c*x")
+        val names = Validation.validate(b.model).filter { Regex("name", RegexOption.IGNORE_CASE).containsMatchIn(it.message) && "can never" !in it.message }.map { "${it.id}|${it.message}" }
+        assertEquals(
+            listOf(
+                "${regs[0].id}|Name 'A' is used more than once in the state machine.",
+                "T.x|Name 'T.x' cannot contain '.'.",
+                "p2|'S' has two points named 'in'.",
+                "p3|A point cannot be named 'deepHistory'.",
+                "c|Name 'c*x' can contain '*' only as its last character.",
+            ),
+            names,
+        )
     }
 
     @Test
@@ -227,7 +240,8 @@ class ValidationTest {
         b.state("B", "r2")
         b.init("B", "r2")
         b.state("C", "r3")
-        b.vertex(VertexType.Final, "r4")
+        b.vertex(VertexType.Final, "r4", name = "F")
+        b.model.regions.forEachIndexed { i, r -> r.name = "region$i" }
         assertEquals(
             listOf("|warning|The top-level region has no initial pseudostate.", "C|warning|State 'C' can never be entered."),
             Validation.validate(b.model).map { "${it.id}|${it.severity.key}|${it.message}" },
@@ -237,7 +251,8 @@ class ValidationTest {
     @Test
     fun warnsOncePerTopLevelRegionWithStatesButNoInitialPseudostate() {
         val b = ModelBuilder("M")
-        b.model.regions.add(Region("r2"))
+        b.model.regions.add(Region("r2", "r2"))
+        b.model.regions[0].name = "r1"
         b.state("A")
         b.state("B", "r2")
         assertEquals(

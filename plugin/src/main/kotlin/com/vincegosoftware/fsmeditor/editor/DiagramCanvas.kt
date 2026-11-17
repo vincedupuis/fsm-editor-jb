@@ -14,6 +14,7 @@ import com.intellij.util.ui.JBFont
 import com.vincegosoftware.fsmeditor.core.DiagramSession
 import com.vincegosoftware.fsmeditor.core.ElementColors
 import com.vincegosoftware.fsmeditor.core.Extraction
+import com.vincegosoftware.fsmeditor.core.Format
 import com.vincegosoftware.fsmeditor.core.Labels
 import com.vincegosoftware.fsmeditor.core.Num
 import com.vincegosoftware.fsmeditor.core.PointD
@@ -146,6 +147,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         repaint()
         viewListeners.forEach { it() }
     }
+
+    /** Sets the view as another pane of a diff has it. */
+    fun setViewOf(x: Double, y: Double, z: Double) = setView(x, y, z)
 
     fun zoomAt(factor: Double, sx: Double, sy: Double) {
         val z = Geo.clamp(zoom * factor, 0.15, 4.0)
@@ -390,8 +394,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val issue = issueOf(v.id)
         val dropTarget = !exporting && drag?.dropState == v.id
 
-        // Outline of the element's own shape: its color, then selection, warnings and errors, win in that order.
-        val own = Theme.colorOf(v.color)
+        // Outline of the element's own shape: its color (an initial or history pseudostate's is its transition's), then
+        // selection, warnings and errors, win in that order.
+        val own = Theme.colorOf(Geo.colorOf(s.model, v))
         var stroke = own ?: th.line
         var shapeWidth = 1.4
         var fill = own ?: th.line
@@ -418,7 +423,15 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             }
             if (v.id in trace.current) drawGlow(g, v)
         }
-        val shapePen = if (dropTarget) th.stroke(2.5, floatArrayOf(6f, 3f)) else th.stroke(shapeWidth)
+        // A diagram diff or merge: the element's mark (added, removed, changed; conflict, merged, resolved).
+        var markDash: FloatArray? = null
+        val mark = if (!exporting && !selected) DiffMarks.of(editor.diff, v.id) else null
+        if (mark != null) {
+            stroke = mark.color
+            shapeWidth = mark.vertexWidth
+            markDash = mark.dash
+        }
+        val shapePen = if (dropTarget) th.stroke(2.5, floatArrayOf(6f, 3f)) else th.stroke(shapeWidth, markDash)
         val shapeColor = if (dropTarget) th.accent else stroke
         val shapeFill = if (own != null) th.tint(own, th.stateFill) else if (v.type == VertexType.Comment) th.noteFill else th.stateFill
         val textColor = own ?: th.foreground
@@ -471,7 +484,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 } else {
                     outline(box)
                 }
-                val title = v.name + if (v.submachine.isNotEmpty()) " : " + s.machineLabel(v.submachine) else ""
+                val title = Format.shown(v.name) + if (v.submachine.isNotEmpty()) " : " + s.machineLabel(v.submachine) else ""
                 val centered = regions.isEmpty() && lines.isEmpty()
                 val stereo = v.stereotype.isNotEmpty()
                 var ty = y + 16
@@ -502,7 +515,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                             if (v.regionLayout == RegionLayout.Horizontal) g.line(dashed, sepColor, rr.x, rr.y, rr.x, rr.y + rr.h)
                             else g.line(dashed, sepColor, rr.x, rr.y, rr.x + rr.w, rr.y)
                         }
-                        if (region.name.isNotEmpty()) drawText(g, rr.x + 6, rr.y + 12, region.name, 10.0, dimText, TextAnchor.Start, italic = true)
+                        if (Format.shown(region.name).isNotEmpty() && regions.size > 1) drawText(g, rr.x + 6, rr.y + 12, region.name, 10.0, dimText, TextAnchor.Start, italic = true)
                         if (!exporting && drag?.dropRegion == region.id) {
                             g.color = th.alpha(th.accent, 0.08)
                             g.fill(Rectangle2D.Double(rr.x, rr.y, rr.w, rr.h))
@@ -583,7 +596,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
             }
         }
-        val caption = if (v.type == VertexType.ConnectionPointRef) s.pointName(ix.vertex(v.parent), v.ref).ifEmpty { "?" } else v.name
+        val caption = Format.shown(if (v.type == VertexType.ConnectionPointRef) s.pointName(ix.vertex(v.parent), v.ref).ifEmpty { v.ref }.ifEmpty { "?" } else v.name)
         if (caption.isNotEmpty() && v.type != VertexType.State && v.type != VertexType.Comment) {
             val below = if (v.type == VertexType.Fork || v.type == VertexType.Join) y + h + 13 else y + h + 12
             drawText(g, cx, below, caption, 11.0, textColor)
@@ -630,6 +643,13 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             IssueLevel.None -> if (selected) th.accent else Theme.colorOf(t.color) ?: th.line
         }
         var width = if (selected) 2.0 else 1.3
+        var markDash: FloatArray? = null
+        val mark = if (!exporting && !selected && issueOf(t.id) == IssueLevel.None) DiffMarks.of(editor.diff, t.id) else null
+        if (mark != null) {
+            color = mark.color
+            width = mark.transitionWidth
+            markDash = mark.dash
+        }
         // The Trace Player: a transition taken by the current step.
         val trace = trace
         val takenColor = trace?.taken?.get(t.id)?.let { traceColor(it[0], false) }
@@ -645,16 +665,28 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             g.color = th.alpha(TRACE_CURRENT, 0.45)
             g.draw(line)
         }
-        g.stroke = th.stroke(width)
+        g.stroke = th.stroke(width, markDash)
         g.color = color
         g.draw(line)
         val b = pts[pts.size - 1]
-        val (p1, p2) = SvgExport.arrowHead(pts[pts.size - 2], b)
-        val arrow = Path2D.Double()
-        arrow.moveTo(p1.x, p1.y)
-        arrow.lineTo(b.x, b.y)
-        arrow.lineTo(p2.x, p2.y)
-        g.draw(arrow)
+        if (Geo.isDangling(ix, t)) {
+            // The target names nothing: a marker instead of an arrow head.
+            g.stroke = th.stroke(1.4)
+            g.color = th.background
+            g.fill(java.awt.geom.Ellipse2D.Double(b.x - 6, b.y - 6, 12.0, 12.0))
+            g.color = th.error
+            g.draw(java.awt.geom.Ellipse2D.Double(b.x - 6, b.y - 6, 12.0, 12.0))
+            g.draw(Line2D.Double(b.x - 3, b.y - 3, b.x + 3, b.y + 3))
+            g.draw(Line2D.Double(b.x + 3, b.y - 3, b.x - 3, b.y + 3))
+        } else {
+            val (p1, p2) = SvgExport.arrowHead(pts[pts.size - 2], b)
+            val arrow = Path2D.Double()
+            arrow.moveTo(p1.x, p1.y)
+            arrow.lineTo(b.x, b.y)
+            arrow.lineTo(p2.x, p2.y)
+            g.stroke = th.stroke(width)
+            g.draw(arrow)
+        }
         val lines = Labels.transitionLabelItems(s.model, t)
         if (lines.isNotEmpty()) {
             val lp = Geo.labelPos(t, pts)

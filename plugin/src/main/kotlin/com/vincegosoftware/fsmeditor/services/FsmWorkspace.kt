@@ -19,6 +19,10 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.VirtualFileVisitor
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
+import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.util.Alarm
 import com.vincegosoftware.fsmeditor.FsmDocuments
 import com.vincegosoftware.fsmeditor.core.FsmModel
@@ -48,6 +52,7 @@ class FsmWorkspace(private val project: Project) : Disposable {
         project.messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
                 if (events.any { it.path.endsWith(".fsm", ignoreCase = true) }) changed()
+                layoutRenames(events)
             }
         })
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(object : DocumentListener {
@@ -55,6 +60,44 @@ class FsmWorkspace(private val project: Project) : Disposable {
                 if (FsmDocuments.isFsm(FileDocumentManager.getInstance().getFile(event.document))) changed()
             }
         }, this)
+    }
+
+    /**
+     * A model file renamed or moved takes its layout file along (`X.fsm.layout`), unless that one was renamed or moved
+     * too or the new name has one already.
+     */
+    private fun layoutRenames(events: List<VFileEvent>) {
+        val moves = ArrayList<Triple<VirtualFile, VirtualFile, String>>() // layout file, new folder, new name
+        // A layout file renamed or moved in the same batch keeps its own way.
+        val touched = events.mapNotNull { it.file }.toSet()
+        for (e in events) {
+            val file = e.file ?: continue
+            if (!FsmDocuments.isFsm(file)) continue
+            val (oldFolder, oldName) = when (e) {
+                is VFilePropertyChangeEvent -> if (e.propertyName == VirtualFile.PROP_NAME && (e.oldValue as String).endsWith(".fsm", ignoreCase = true)) file.parent to e.oldValue as String else continue
+                is VFileMoveEvent -> e.oldParent to file.name
+                else -> continue
+            }
+            val layout = oldFolder?.findChild("$oldName.layout") ?: continue
+            if (layout in touched) continue
+            val folder = file.parent ?: continue
+            if (folder.findChild(file.name + ".layout") != null) continue
+            moves.add(Triple(layout, folder, file.name + ".layout"))
+        }
+        if (moves.isEmpty()) return
+        ApplicationManager.getApplication().invokeLater({
+            WriteCommandAction.writeCommandAction(project).withName("Rename Layout File").run<RuntimeException> {
+                for ((layout, folder, name) in moves) {
+                    try {
+                        if (!layout.isValid || folder.findChild(name) != null) continue
+                        if (layout.parent != folder) layout.move(this, folder)
+                        if (layout.name != name) layout.rename(this, name)
+                    } catch (_: IOException) {
+                        // left as it is: the machine's elements are placed automatically
+                    }
+                }
+            }
+        }, project.disposed)
     }
 
     /** Runs [listener] (on the UI thread) whenever a state machine file changes, until [parent] is disposed. */
@@ -101,7 +144,7 @@ class FsmWorkspace(private val project: Project) : Disposable {
         return output.sortedBy { it.path.lowercase() }
     }
 
-    /** Summary of a machine file, cached by document or file modification stamp. Read action. */
+    /** Summary of a machine file (with the unsaved changes of its model document), cached by document or file modification stamp. Read action. */
     fun summaryOf(file: VirtualFile): MachineSummary? {
         // An href without a file part (`#sm`) resolves to the document's folder.
         if (!file.isValid || file.isDirectory) return null

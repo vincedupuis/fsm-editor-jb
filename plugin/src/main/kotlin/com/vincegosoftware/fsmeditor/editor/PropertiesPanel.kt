@@ -19,6 +19,7 @@ import com.vincegosoftware.fsmeditor.core.ConnectionPointInfo
 import com.vincegosoftware.fsmeditor.core.DiagramSession
 import com.vincegosoftware.fsmeditor.core.ElementColors
 import com.vincegosoftware.fsmeditor.core.Expressions
+import com.vincegosoftware.fsmeditor.core.Format
 import com.vincegosoftware.fsmeditor.core.JsWhitespace
 import com.vincegosoftware.fsmeditor.core.Labels
 import com.vincegosoftware.fsmeditor.core.MachineKind
@@ -112,6 +113,13 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         val s = s ?: return
         s.reindex()
         val ids = s.selection.toList()
+        // In a diff or merge: what changed in the selected element.
+        val diff = editor.diff
+        val lines = if (diff != null && ids.size == 1) diff.details[ids[0]] else null
+        if (diff != null && !lines.isNullOrEmpty()) {
+            put(h4(if (diff.role == "result" || diff.role == "incoming" || diff.role == "current") "Differs between the two sides" else "Changes"))
+            for (line in lines) put(EditorPanel.wrappingText(line))
+        }
         if (ids.size > 1) {
             put(h3("${ids.size} elements selected"))
             put(muted("Drag to move them together. Ctrl+D duplicates, Ctrl+C and Ctrl+V copy between diagrams."))
@@ -487,7 +495,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         val m = s.model
         put(
             h3("State Machine"),
-            textField("Name", m.name, { m.name = it; commit() }),
+            textField("Name", m.name, { m.name = it; commit() }, { s.nameCheck(m, it) }),
             selectField(
                 "Kind", if (m.kind == MachineKind.Protocol) "protocol" else "behavioral",
                 listOf("behavioral" to "Behavioral state machine", "protocol" to "Protocol state machine"),
@@ -495,7 +503,6 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                 m.kind = if (it == "protocol") MachineKind.Protocol else MachineKind.Behavioral
                 commit(true)
             },
-            textField("Context (owning classifier)", m.context, { m.context = it; commit() }, placeholder = "e.g. MediaPlayer"),
             textField("Documentation", m.documentation, { m.documentation = it; commit() }, multiline = true, rows = 4),
         )
         issuesFor("")?.let { put(it) }
@@ -543,21 +550,22 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                 if (anchors.isEmpty()) put(muted("Drag the ⊕ handle onto an element to attach this comment."))
                 for (a in anchors) {
                     val id = if (a is Vertex) a.id else (a as Transition).id
-                    val text = if (a is Transition) "Transition ${Labels.transitionLabel(s.model, a).ifEmpty { a.id }}" else (a as Vertex).name.ifEmpty { a.type.title }
+                    val text = if (a is Transition) "Transition ${Labels.transitionLabel(s.model, a)}" else Format.shown((a as Vertex).name).ifEmpty { a.type.title }
                     put(row(JBLabel(text), iconButton("Detach") {
                         v.anchors.remove(id)
                         commit(true)
                     }))
                 }
             }
-            else -> put(textField("Name", v.name, { v.name = JsWhitespace.trim(it); commit() }))
+            else -> put(textField("Name", Format.shown(v.name), { v.name = it; commit() }, { s.nameCheck(v, it) }, if (Format.isGenerated(v.name)) "none shown (a generated name)" else null))
         }
-        val what = if (v.type == VertexType.Comment) "the comment" else v.name.ifEmpty { "the element" }
+        val what = if (v.type == VertexType.Comment) "the comment" else Format.shown(v.name).ifEmpty { "the element" }
         if (v.type == VertexType.State && v.regions.isNotEmpty()) {
             // A composite state has a color for its header and one for its regions.
             put(colorField(v.color, { s.setColor(v, null, it); editor.renderProps() }, what, "Title color"))
             put(colorField(v.itemColors["background"] ?: "", { s.setColor(v, "background", it); editor.renderProps() }, what, "Background color"))
-        } else {
+        } else if (v.type != VertexType.Initial && v.type != VertexType.ShallowHistory && v.type != VertexType.DeepHistory) {
+            // Initial and history pseudostates take their transition's color.
             put(colorField(v.color, { s.setColor(v, null, it); editor.renderProps() }, what))
         }
 
@@ -604,12 +612,20 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         } else {
             put(h4(if (v.regions.size > 1) "Orthogonal regions" else "Regions"))
             for ((i, region) in v.regions.withIndex()) {
-                val tb = input(region.name, placeholder = "Region ${i + 1}")
-                var committed = region.name
+                val tb = input(Format.shown(region.name), placeholder = if (v.regions.size > 1) "Region ${i + 1}" else "no name (one region)")
+                // A single region has no name shown: named only beside others.
+                tb.isEnabled = v.regions.size > 1
+                var committed = tb.text
                 onCommit(tb, false) {
-                    if (JsWhitespace.trim(tb.text) == committed) return@onCommit
-                    region.name = JsWhitespace.trim(tb.text)
-                    committed = region.name
+                    if (tb.text == committed) return@onCommit
+                    val ok = s.nameCheck(region, tb.text)
+                    if (!ok.ok) {
+                        editor.toast(ok.error ?: "")
+                        tb.text = committed
+                        return@onCommit
+                    }
+                    region.name = ok.value
+                    committed = tb.text
                     commit()
                 }
                 put(row(tb, iconButton("Remove region and its contents") {
@@ -672,11 +688,11 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         val href = st?.submachine ?: ""
         val info = s.submachines[href]
         val machine = if (href.isNotEmpty()) s.machineLabel(href) else ""
-        put(muted(if (st != null) "On ${st.name.ifEmpty { "state" }}; refers to a point of ${machine.ifEmpty { "(no submachine set)" }}." else "Not attached to a state."))
+        put(muted(if (st != null) "On ${Format.shown(st.name).ifEmpty { "a state" }}; refers to a point of ${machine.ifEmpty { "(no submachine set)" }}." else "Not attached to a state."))
         val pts: List<ConnectionPointInfo> = if (st != null) s.submachinePoints(st) else emptyList()
         if (pts.isNotEmpty()) {
             val cur = "${kindText(v.pointKind)}:${v.ref}"
-            val options = pts.map { "${kindText(it.kind)}:${it.id}" to "${it.name.ifEmpty { it.id }} (${kindText(it.kind)} point)" }.toMutableList()
+            val options = pts.map { "${kindText(it.kind)}:${it.id}" to "${Format.shown(it.name).ifEmpty { "(unnamed)" }} (${kindText(it.kind)} point)" }.toMutableList()
             if (pts.none { "${kindText(it.kind)}:${it.id}" == cur }) options.add(0, cur to if (v.ref.isNotEmpty()) "${v.ref} (missing)" else "— choose a point —")
             put(selectField("Referenced point", cur, options) { value ->
                 val i = value.indexOf(':')
@@ -693,7 +709,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             }
             if (why.isNotEmpty()) put(muted(why))
             put(
-                textField("Referenced point id", v.ref, { v.ref = JsWhitespace.trim(it); commit() }),
+                textField("Referenced point name", v.ref, { v.ref = JsWhitespace.trim(it); commit() }),
                 selectField("Direction", kindText(v.pointKind), listOf("entry" to "Entry point", "exit" to "Exit point")) {
                     v.pointKind = if (it == "exit") PointKind.Exit else PointKind.Entry
                     commit(true)
@@ -723,7 +739,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         for (q in info.points) {
             val existing = refs.firstOrNull { it.ref == q.id }
             val label = EditorPanel.richText(
-                Triple("${if (q.kind == PointKind.Entry) "○" else "⊗"} ${q.name.ifEmpty { q.id }}", false, null),
+                Triple("${if (q.kind == PointKind.Entry) "○" else "⊗"} ${Format.shown(q.name).ifEmpty { "(unnamed)" }}", false, null),
                 Triple(" · ${kindText(q.kind)}", false, UIUtil.getContextHelpForeground()),
             )
             val action = if (existing != null) {
@@ -749,7 +765,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
     private fun transitionProps(s: DiagramSession, t: Transition) {
         val src = s.index.vertex(t.source)
         val tgt = s.index.vertex(t.target)
-        fun nm(x: Vertex?) = if (x == null) "?" else x.name.ifEmpty { x.type.title }
+        fun nm(x: Vertex?) = if (x == null) "?" else Format.shown(x.name).ifEmpty { x.type.title }
         put(
             h3("Transition"),
             muted("${nm(src)} → ${nm(tgt)}"),
@@ -789,7 +805,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                     ),
                     s, t, item("guard"), "the guard",
                 ),
-                withColor(textField("Effect", t.effect, { t.effect = it; commit() }, Expressions::checkActions, "e.g. notify(); log()"), s, t, item("effect"), "the effect"),
+                withColor(textField("Action", t.action, { t.action = it; commit() }, Expressions::checkActions, "e.g. notify(); log()"), s, t, item("action"), "the action"),
             )
         }
         put(h4("Routing"))

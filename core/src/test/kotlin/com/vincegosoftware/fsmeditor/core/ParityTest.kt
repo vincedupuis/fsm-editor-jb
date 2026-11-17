@@ -1,82 +1,23 @@
 package com.vincegosoftware.fsmeditor.core
 
-import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.ValueSource
+import com.vincegosoftware.fsmeditor.core.TestFiles.EXAMPLES
+import com.vincegosoftware.fsmeditor.core.TestFiles.fixture
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * Compares the Kotlin implementation with the reference results in fixtures/,
- * produced by FSM Editor for VS Code (fixtures/README.md), so the editors read,
- * write and validate files the same way.
+ * Parity with FSM Editor for VS Code beyond the file format (whose reader and validator are checked against fsm-cli's
+ * test cases, [CasesTest]): the grammar checks of fixtures/grammar.json, made from the reference by the umbrella
+ * repo's parity script, and the reading of old files as JavaScript reads them. ParityTests.cs of the Visual Studio edition.
  */
 class ParityTest {
-    private fun fixture(name: String) = File(javaClass.getResource("/fixtures/$name")!!.toURI())
-
     private fun read(file: File) = file.readText().replace("\r\n", "\n")
 
     @Suppress("UNCHECKED_CAST")
-    private val expected = Json.parse(read(fixture("expected.json"))) as Map<String, Any?>
-
-    @Suppress("UNCHECKED_CAST")
     private fun Any?.obj(key: String) = (this as Map<String, Any?>)[key]
-
-    private fun format(issues: List<Issue>) = issues.map { "${it.severity.key}|${it.id}|${it.message}" }
-
-    private fun format(issues: Any?) = (issues as List<*>).map { "${it.obj("severity")}|${it.obj("id")}|${it.obj("message")}" }
-
-    @ParameterizedTest
-    @ValueSource(strings = ["MediaPlayer.fsm", "Order.fsm", "Payment.fsm"])
-    fun examplesRoundTripUnchanged(file: String) {
-        val text = read(File(EXAMPLES, file))
-        assertEquals(text, Xmi.toXmi(Xmi.fromXmi(text)))
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle", "infinite"])
-    fun writesTheSameXmi(name: String) {
-        val text = read(fixture("$name.fsm"))
-        assertEquals(read(fixture("$name.roundtrip.xmi")), Xmi.toXmi(Xmi.fromXmi(text)))
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle", "infinite"])
-    fun oneSaveSettles(name: String) {
-        // Settled in one save when the ids are unique; with ids used twice (reported by the validator), saved again
-        // without an element written twice.
-        val saved = read(fixture("$name.roundtrip.xmi"))
-        val again = Xmi.toXmi(Xmi.fromXmi(saved))
-        val sharesIds = (expected.obj("cases").obj(name).obj("issues") as List<*>).any { (it.obj("message") as String).startsWith("Duplicate id") }
-        if (!sharesIds) {
-            assertEquals(saved, again)
-        } else {
-            val ids = { s: String -> Regex("xmi:id=").findAll(s).count() }
-            assertEquals(ids(saved), ids(again))
-            assertEquals(ids(again), ids(Xmi.toXmi(Xmi.fromXmi(again))))
-        }
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = ["MediaPlayer.fsm", "Order.fsm", "Payment.fsm"])
-    fun examplesValidateTheSame(file: String) {
-        val path = File(EXAMPLES, file).path
-        val model = Xmi.fromXmi(read(File(path)))
-        val files = File(EXAMPLES).listFiles { f -> f.name.endsWith(".fsm") }!!.map { it.path }
-        val summaryOf = { f: String -> if (File(f).exists()) MachineSummary.tryRead(read(File(f))) else null }
-        val display = { f: String -> File(f).name }
-        val machines = SubmachineResolver.listMachines(path, files, summaryOf, display)
-        val submachines = SubmachineResolver.resolve(path, model, machines, summaryOf, display)
-        assertEquals(format(expected.obj("examples").obj(file).obj("issues")), format(Validation.validate(model, submachines)))
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = ["grammar", "structure", "protocol", "cycles", "colors", "loops", "regions", "groups", "edges", "regionids", "settle", "infinite"])
-    fun casesValidateTheSame(name: String) {
-        val model = Xmi.fromXmi(read(fixture("$name.fsm")))
-        assertEquals(format(expected.obj("cases").obj(name).obj("issues")), format(Validation.validate(model)))
-    }
 
     private fun <T> assertCheck(expected: Any?, actual: Check<T>, format: (T) -> String, what: String) {
         assertEquals(expected.obj("ok"), actual.ok, "$what: expected ok=${expected.obj("ok")}, got ${actual.error}")
@@ -90,70 +31,9 @@ class ParityTest {
     }
 
     @Test
-    fun keepsATimeTriggerAndAnEventWhoseIdsWouldBeTheSameApart() {
-        val model = FsmModel.createDefault("M")
-        model.transitions.add(Transition("t1", "v_idle", "v_idle").apply { triggers.add("after(1s)") })
-        model.transitions.add(Transition("t2", "v_idle", "v_idle").apply { triggers.add("after_1s_") })
-        val xmi = Xmi.toXmi(model)
-        assertEquals(listOf("", "after(1s)", "after_1s_"), Xmi.fromXmi(xmi).transitions.map { it.triggers.joinToString(",") })
-        val ids = Regex("xmi:id=\"([^\"]*)\"").findAll(xmi).map { it.groupValues[1] }.toList()
-        assertEquals(ids.size, ids.toSet().size)
-    }
-
-    @Test
-    fun eventIdsReplaceEachUtf16UnitAsTheOtherEditions() {
-        // xmi.ts replaces each UTF-16 unit with /[^A-Za-z0-9_]/g: an emoji (a surrogate pair) gives two _.
-        val model = FsmModel.createDefault("M")
-        model.transitions.add(Transition("t1", "v_idle", "v_idle").apply { triggers.add("go😀") })
-        val xmi = Xmi.toXmi(model)
-        assertTrue("event=\"ev_go__\"" in xmi)
-        assertTrue("signal=\"sig_go__\"" in xmi)
-    }
-
-    @Test
-    fun infiniteShapeBoundsCountAsSizesThenReadAsZero() {
-        // +"1e400" || 0 is Infinity in xmi.ts, so the state keeps its width instead of getting the default size;
-        // the JSON the other editions then go through makes the infinite height 0.
-        val xmi = Xmi.toXmi(FsmModel.createDefault("M"))
-            .replace("x=\"160\" y=\"60\" width=\"140\" height=\"60\"", "x=\"160\" y=\"60\" width=\"100\" height=\"1e400\"")
-        val idle = Xmi.fromXmi(xmi).vertices.single { it.id == "v_idle" }
-        assertEquals(100.0 to 0.0, idle.w to idle.h)
-    }
-
-    @Test
-    fun labelBoundsUseTheArithmeticOfTheOtherEditions() {
-        // Halfway between (170, 130) and (43.3, 70), xmi.ts computes x = 106.64999999999999 (Math.hypot), so the
-        // label 123.5 to its right, 100 wide, starts at 180.1, not 180.2.
-        val model = FsmModel.createDefault("M")
-        model.vertices[0].x = 33.3
-        model.vertices[0].y = 60.0
-        model.vertices[1].x = 100.0
-        model.vertices[1].y = 100.0
-        model.transitions[0].source = "v_idle"
-        model.transitions[0].target = "v_init"
-        model.transitions[0].labelOffset = PointD(123.5, 0.0)
-        val xmi = Xmi.toXmi(model)
-        assertTrue("<bounds xmi:type=\"dc:Bounds\" x=\"180.1\" y=\"92\" width=\"100\" height=\"16\"/>" in xmi)
-        // Read back without rounding (123.45 in xmi.ts too), so that it gives the same box again.
-        assertEquals(PointD(123.45, 0.0), Xmi.fromXmi(xmi).transitions[0].labelOffset)
-        assertEquals(xmi, Xmi.toXmi(Xmi.fromXmi(xmi)))
-        assertEquals(5.0, Num.hypot(3.0, -4.0))
-        // Math.hypot(1.5, 2.5) in JavaScript; sqrt(1.5 * 1.5 + 2.5 * 2.5) is 2.9154759474226504.
-        assertEquals(2.91547594742265, Num.hypot(1.5, 2.5))
-
-        // Read as JavaScript reads them: a bound that is missing or not a number puts the label on the line along
-        // that axis (NaN, which the other editions' JSON turns into 0), and attributes are read like +x || 0.
-        val noWidth = xmi.replace("x=\"180.1\" y=\"92\" width=\"100\"", "x=\"180.1\" y=\"92\"")
-        assertEquals(PointD(0.0, 0.0), Xmi.fromXmi(noWidth).transitions[0].labelOffset)
-        assertEquals(16.0, Num.parse("0x10"))
-        assertEquals(5.0, Num.parse(" 5 "))
-        assertEquals(0.0, Num.parse("5px"))
-        assertEquals(0.0, Num.parse(null))
-    }
-
-    @Test
     fun grammarMatches() {
-        for (c in expected["grammar"] as List<*>) {
+        val expected = PlainJson.parse(read(fixture("grammar.json")))
+        for (c in expected.obj("grammar") as List<*>) {
             val t = c.obj("text") as String
             assertCheck(c.obj("condition"), Expressions.checkCondition(t), { it }, "condition '$t'")
             assertCheck(c.obj("guard"), Expressions.checkGuard(t, true), { it }, "guard '$t'")
@@ -167,7 +47,46 @@ class ParityTest {
         }
     }
 
-    companion object {
-        val EXAMPLES: String = System.getProperty("fsm.examples") ?: "../examples"
+    @Test
+    fun examplesValidateWithTheirSubmachines() {
+        val files = File(EXAMPLES).listFiles { f -> f.name.endsWith(".fsm") }!!.map { it.path }
+        val summaryOf = { f: String -> if (File(f).exists()) MachineSummary.tryRead(read(File(f))) else null }
+        val display = { f: String -> File(f).name }
+        for (path in files) {
+            val model = Format.readModel(read(File(path))).model!!
+            val machines = SubmachineResolver.listMachines(path, files, summaryOf, display)
+            assertEquals(emptyList(), Validation.validate(model, SubmachineResolver.resolve(path, model, machines, summaryOf, display)), path)
+        }
+        val order = File(EXAMPLES, "Order.fsm").path
+        val list = SubmachineResolver.listMachines(order, files, summaryOf, display)
+        assertEquals(listOf("MediaPlayer.fsm", "Payment.fsm"), list.map { it.href })
+        assertEquals(listOf("retry", "failed", "cancelled"), list.single { it.name == "Payment" }.points.map { it.id })
+    }
+
+    @Test
+    fun subMachinePathsThatAreNotPathsAreNotFound() {
+        val model = FsmModel.createDefault("M")
+        model.vertices[1].submachine = "a\u0000b.fsm"
+        val info = SubmachineResolver.resolve(File(EXAMPLES, "M.fsm").path, model, emptyList(), { null }, { it })
+        assertFalse(info.getValue("a\u0000b.fsm").found)
+        assertEquals("sm", Hrefs.resolve("/tmp/M.fsm", "a.fsm#sm#x").second)
+    }
+
+    @Test
+    fun oldFilesReadNumbersAsJavaScriptDoes() {
+        assertEquals(5.0, Num.hypot(3.0, -4.0))
+        // Math.hypot(1.5, 2.5) in JavaScript; sqrt(1.5 * 1.5 + 2.5 * 2.5) is 2.9154759474226504.
+        assertEquals(2.91547594742265, Num.hypot(1.5, 2.5))
+        assertEquals(16.0, Num.parse("0x10"))
+        assertEquals(5.0, Num.parse(" 5 "))
+        assertEquals(0.0, Num.parse("5px"))
+        assertEquals(0.0, Num.parse(null))
+        assertEquals("Infinity", Num.js(Double.POSITIVE_INFINITY))
+        assertEquals("1e+21", Num.format(1e21))
+        // +"1e400" || 0 is Infinity in xmi.ts: the state keeps it, and converting reports it.
+        val old = read(fixture("old/Payment.fsm"))
+        val i = old.indexOf("width=\"")
+        val infinite = old.substring(0, i) + "width=\"1e400\" data-width=" + old.substring(i + 6)
+        assertTrue(Conversion.convertGroup(listOf(ConvertInput("/x/Payment.fsm", infinite)))[0].losses.any { "not a number" in it })
     }
 }

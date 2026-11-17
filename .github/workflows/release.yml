@@ -9,7 +9,8 @@ on:
     tags: ['v*']
 
 env:
-  # Release of fsm-cli (github.com/vincedupuis/fsm-cli) whose `fsm` code generator the plugin bundles.
+  # Release of fsm-cli (github.com/vincedupuis/fsm-cli) whose `fsm` code generator (fsm-<version>-<platform> archives)
+  # and fsm-schemas-<version>.tar.gz the plugin bundles, and whose fsm-cases-<version>.tar.gz the tests use.
   FSM_CLI_VERSION: 0.6.3
 
 jobs:
@@ -41,7 +42,7 @@ jobs:
         with:
           cache-provider: basic
 
-      - name: Fetch the fsm code generator
+      - name: Fetch the fsm code generator, the format's schemas and its test cases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -56,6 +57,12 @@ jobs:
             platform=$(basename "$dir" | sed "s/^fsm-$FSM_CLI_VERSION-//")
             mkdir -p plugin/cli
             cp -R "$dir" "plugin/cli/$platform"
+          done
+          # The model file's JSON Schema (bundled: the Text tab checks .fsm files with it) and the format's test cases
+          # (for the core tests only, not bundled).
+          for part in schemas cases; do
+            gh release download "v$FSM_CLI_VERSION" -R vincedupuis/fsm-cli -p "fsm-$part-$FSM_CLI_VERSION.tar.gz" -D "$RUNNER_TEMP"
+            tar xzf "$RUNNER_TEMP/fsm-$part-$FSM_CLI_VERSION.tar.gz" -C plugin/cli
           done
           ls plugin/cli
 

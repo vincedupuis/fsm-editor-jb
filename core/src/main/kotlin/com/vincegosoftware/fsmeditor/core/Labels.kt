@@ -2,7 +2,7 @@ package com.vincegosoftware.fsmeditor.core
 
 /** The text shown on transitions and in state compartments, and parsing it back. */
 object Labels {
-    /** `t1, t2 [guard] / effect`, or `[pre] t / [post]` for protocol machines. */
+    /** `t1, t2 [guard] / action`, or `[pre] t / [post]` for protocol machines. */
     fun transitionLabel(model: FsmModel, t: Transition): String {
         val trig = t.triggers.joinToString(", ")
         if (model.kind == MachineKind.Protocol) {
@@ -14,11 +14,11 @@ object Labels {
         }
         var s = trig
         if (t.guard.isNotEmpty()) s += " [${t.guard}]"
-        if (t.effect.isNotEmpty()) s += " / ${t.effect}"
+        if (t.action.isNotEmpty()) s += " / ${t.action}"
         return JsWhitespace.trim(s)
     }
 
-    /** The label as stacked lines: events, `[guard]`, `/ effect` (protocol: `[pre]`, event, `/ [post]`). */
+    /** The label as stacked lines: events, `[guard]`, `/ action` (protocol: `[pre]`, event, `/ [post]`). */
     fun transitionLabelLines(model: FsmModel, t: Transition): List<String> = transitionLabelItems(model, t).map { it.second }
 
     /** [transitionLabelLines] with the item key ([ElementColors.ITEM_KEYS]) each line shows. */
@@ -34,7 +34,7 @@ object Labels {
             listOf(
                 "triggers" to trig,
                 "guard" to if (t.guard.isNotEmpty()) "[${t.guard}]" else "",
-                "effect" to if (t.effect.isNotEmpty()) "/ ${t.effect}" else "",
+                "action" to if (t.action.isNotEmpty()) "/ ${t.action}" else "",
             )
         }
         return lines.filter { it.second.isNotEmpty() }
@@ -75,11 +75,11 @@ object Labels {
         if (!trig.ok) return "Trigger: ${trig.error}"
         val guard = Expressions.checkGuard(g?.groupValues?.get(1) ?: "", allowsElse(source))
         if (!guard.ok) return "Guard: ${guard.error}"
-        val effect = Expressions.checkActions(if (slash >= 0) label.substring(slash + 1) else "")
-        if (!effect.ok) return "Effect: ${effect.error}"
+        val action = Expressions.checkActions(if (slash >= 0) label.substring(slash + 1) else "")
+        if (!action.ok) return "Action: ${action.error}"
         t.triggers = trig.value.toMutableList()
         t.guard = guard.value
-        t.effect = effect.value
+        t.action = action.value
         return null
     }
 

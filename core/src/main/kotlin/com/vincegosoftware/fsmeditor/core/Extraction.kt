@@ -25,28 +25,37 @@ class ExtractResult(
  *   references with the same ids take their place on its border. A composite state with several regions moves whole,
  *   as above, since the new machine has one region.
  *
- * A transition crossing the boundary is split at a connection point, keeping its trigger, guard and effect on its
+ * A transition crossing the boundary is split at a connection point, keeping its trigger, guard and action on its
  * source's side: an incoming one goes to an entry point reference on the submachine state, then from the new
  * machine's entry point to its target; an outgoing one goes to an exit point of the new machine, then from the exit
  * point reference to its target. There is one entry point per inner target and one exit point per outer target. An
- * incoming transition to the target of the new machine's initial transition (without guard or effect) targets the
+ * incoming transition to the target of the new machine's initial transition (without guard or action) targets the
  * submachine state itself (default entry) instead.
  */
 object Extraction {
     private const val POINT = 16.0
-    private const val MACHINE_ID = "sm"
 
     /** The name proposed for the new machine: the extracted state's name when there is one, else `Submachine`. */
     fun proposedName(model: FsmModel, selected: Collection<String>): String {
         val states = extractedRoots(model, selected).filter { it.type == VertexType.State }
-        val name = if (states.size == 1) JsWhitespace.trim(states[0].name) else ""
-        return name.ifEmpty { "Submachine" }
+        val name = if (states.size == 1 && !Format.isGenerated(states[0].name)) JsWhitespace.trim(states[0].name) else ""
+        if (name.isEmpty()) return "Submachine"
+        // Names are unique in a machine: a state that moves into the new machine whole leaves it its name.
+        return if (name in namesInside(model, selected)) "${name}Machine" else name
     }
+
+    /** The names of the elements the new machine would hold. */
+    fun namesInside(model: FsmModel, selected: Collection<String>): Set<String> =
+        try {
+            extract(model, selected, "Submachine", "Submachine.fsm").machine.vertices.map { it.name }.filterTo(HashSet()) { it.isNotEmpty() }
+        } catch (_: ExtractException) {
+            emptySet()
+        }
 
     /** Why [selected] can't be extracted, or null when it can. */
     fun problem(model: FsmModel, selected: Collection<String>): String? =
         try {
-            extract(model, selected, "Submachine", "Submachine.fsm#sm")
+            extract(model, selected, "Submachine", "Submachine.fsm")
             null
         } catch (e: ExtractException) {
             e.message
@@ -214,10 +223,10 @@ object Extraction {
             (if (kind == PointKind.Entry) entries else exits).add(point)
         }
 
-        // Default entry: the target of the new machine's initial transition, when it has no guard or effect.
+        // Default entry: the target of the new machine's initial transition, when it has no guard or action.
         val initial = machineVertices.firstOrNull { it.type == VertexType.Initial && it.parent == region.id }
         val initialOut = if (initial != null) machineTransitions.filter { it.source == initial.id } else emptyList()
-        val defaultTarget = if (initialOut.size == 1 && JsWhitespace.trim(initialOut[0].guard).isEmpty() && JsWhitespace.trim(initialOut[0].effect).isEmpty()) initialOut[0].target else null
+        val defaultTarget = if (initialOut.size == 1 && JsWhitespace.trim(initialOut[0].guard).isEmpty() && JsWhitespace.trim(initialOut[0].action).isEmpty()) initialOut[0].target else null
 
         // By inner target: the reference on the submachine state that incoming transitions go to.
         val entryRefFor = HashMap<String, String>()
@@ -233,7 +242,8 @@ object Extraction {
                 naming.remove(v)
                 return owner.ifEmpty { "Point" }
             }
-            return identifier(v.name).ifEmpty { capitalize(typeName(v.type)) }
+            // A generated name (choice1*) is no name.
+            return identifier(if (Format.isGenerated(v.name)) "" else v.name).ifEmpty { capitalize(typeName(v.type)) }
         }
         for (t in crossing) {
             t.points = mutableListOf()
@@ -307,10 +317,15 @@ object Extraction {
                 .distinct().toMutableList()
         }
 
+        // The references name their points by name.
+        val pointNameById = (entries + exits).associate { it.id to it.name }
+        for (r in entryRefs + exitRefs + parentVertices) {
+            if (r.type == VertexType.ConnectionPointRef && r.parent == state.id) pointNameById[r.ref]?.let { r.ref = it }
+        }
+
         m.vertices = parentVertices
         m.transitions = parentTransitions
         val machine = FsmModel()
-        machine.id = MACHINE_ID
         machine.name = name
         machine.kind = m.kind
         machine.regions = mutableListOf(region)

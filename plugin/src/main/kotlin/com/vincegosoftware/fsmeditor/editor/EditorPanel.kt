@@ -33,7 +33,8 @@ import com.vincegosoftware.fsmeditor.core.DiagramSession
 import com.vincegosoftware.fsmeditor.core.Extraction
 import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.Geometry
-import com.vincegosoftware.fsmeditor.core.Hrefs
+import com.vincegosoftware.fsmeditor.core.Format
+import com.vincegosoftware.fsmeditor.core.FormatLossException
 import com.vincegosoftware.fsmeditor.core.Issue
 import com.vincegosoftware.fsmeditor.core.JsWhitespace
 import com.vincegosoftware.fsmeditor.core.Labels
@@ -48,8 +49,8 @@ import com.vincegosoftware.fsmeditor.core.TextAnchor
 import com.vincegosoftware.fsmeditor.core.Tools
 import com.vincegosoftware.fsmeditor.core.TraceView
 import com.vincegosoftware.fsmeditor.core.VertexType
-import com.vincegosoftware.fsmeditor.core.Xmi
-import com.vincegosoftware.fsmeditor.core.XmiException
+import com.vincegosoftware.fsmeditor.core.MachineFiles
+import com.vincegosoftware.fsmeditor.core.PaneDiff
 import com.vincegosoftware.fsmeditor.settings.FsmSettings
 import java.awt.BorderLayout
 import java.awt.Color
@@ -88,8 +89,8 @@ import kotlin.math.roundToInt
 
 /** What the diagram editor asks of the document editor hosting it. */
 interface EditorHost {
-    /** Writes the model to the document (as XMI). */
-    fun write(model: FsmModel)
+    /** Writes the model to the document (its two files); a message when the change can't be made, else null. */
+    fun write(model: FsmModel): String?
     fun undo()
     fun redo()
     fun generateCode()
@@ -98,11 +99,23 @@ interface EditorHost {
     fun exportSvg()
     fun exportPng()
     fun openAsText()
-    fun openSubmachine(href: String)
-    /** Asks for the name of a state machine to create next to the document, starting from [proposed]; null when cancelled. */
-    fun askSubmachineName(proposed: String): String?
-    /** Creates `name.fsm` next to the document with [xmi]; false (after telling why) when it can't. */
-    fun createMachineFile(name: String, xmi: String): Boolean
+    /** Opens the machine of a submachine state's reference (its file path, relative to the document). */
+    fun openSubmachine(path: String)
+    /**
+     * Asks for the name of a state machine to create next to the document, starting from [proposed] and refusing the
+     * names of [namesInside]; null when cancelled.
+     */
+    fun askSubmachineName(proposed: String, namesInside: Set<String>): String?
+    /** Creates `name.fsm` and its layout file next to the document; false (after telling why) when it can't. */
+    fun createMachineFiles(name: String, modelText: String, layoutText: String): Boolean
+    /** The next or previous change or conflict ([dir]), or the conflict of [key]. */
+    fun diffNavigate(dir: Int, key: String?) {}
+    fun diffShowLayout(show: Boolean) {}
+    /** Takes a side (`incoming` or `current`) for the conflict of [key], or all of them (null). */
+    fun mergeChoose(key: String?, side: String) {}
+    fun mergeComplete() {}
+    /** Opens the IDE's text merge, for conflicts the diagram merge can't open. */
+    fun openTextMerge() {}
 }
 
 /**
@@ -115,6 +128,23 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     private val props = PropertiesPanel(this)
     private val layers = CanvasLayers()
     private val toolbar = JPanel(BorderLayout())
+    /** The bar of a diff or merge pane: its role, the changes to step through and, in the result, the conflicts. */
+    private val diffBar = JPanel(BorderLayout())
+    private val north = JPanel(BorderLayout())
+    /** The model last received from the source: a read-only diagram goes back to it after a change. */
+    private var received: FsmModel? = null
+    private var mergeFallback = false
+    /** The view is being set by another pane of the diff: not sent back. */
+    var viewFromPartner = false
+        private set
+
+    /** A version of the file or a side of a merge: changes are refused. */
+    var readOnly = false
+        private set
+
+    /** The marks and bar of a diff or merge pane, or null. */
+    var diff: PaneDiff? = null
+        private set
     private val toolbox = WidthTrackingPanel()
     private val status = JPanel(BorderLayout())
     private val toast = Toast()
@@ -153,6 +183,100 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         renderStatus()
     }
 
+    fun setReadOnly(value: Boolean) {
+        if (readOnly == value) return
+        readOnly = value
+        arrangePanes()
+        renderProps()
+    }
+
+    fun showDiff(value: PaneDiff?) {
+        diff = value
+        renderDiffBar()
+        canvas.repaint()
+        renderProps()
+    }
+
+    /** The view of another pane of the diff or merge. */
+    fun setViewFromPartner(x: Double, y: Double, zoom: Double) {
+        viewFromPartner = true
+        try {
+            canvas.setViewOf(x, y, zoom)
+        } finally {
+            viewFromPartner = false
+        }
+    }
+
+    /** The bar of a diff or merge pane: its role, the changes to step through and, in the result, the conflicts. */
+    private fun renderDiffBar() {
+        val d = diff
+        diffBar.removeAll()
+        if (d == null) {
+            diffBar.isVisible = false
+            north.revalidate()
+            return
+        }
+        diffBar.isVisible = true
+        diffBar.border = JBUI.Borders.compound(JBUI.Borders.customLineBottom(JBColor.border()), JBUI.Borders.empty(3, 8))
+        val bar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply { isOpaque = false }
+        bar.add(JBLabel(ROLE_LABELS[d.role] ?: d.role).apply { font = JBFont.label().asBold() })
+        bar.add(JBLabel(d.title).apply { foreground = UIUtil.getContextHelpForeground() })
+        val isDiff = d.role == "old" || d.role == "new"
+        val what = if (isDiff) "change" else "conflict"
+        bar.add(JBLabel(if (d.count > 0) "${d.count} $what${if (d.count == 1) "" else "s"}" else if (isDiff) "No changes" else "No conflicts"))
+        fun button(text: String, tip: String?, enabled: Boolean = true, bold: Boolean = false, run: () -> Unit) = JButton(text).apply {
+            toolTipText = tip
+            isEnabled = enabled
+            if (bold) font = JBFont.label().asBold()
+            addActionListener { run() }
+        }
+        bar.add(button("◀", if (isDiff) "Previous change" else "Previous conflict", d.count > 0) { host.diffNavigate(-1, null) })
+        bar.add(button("▶", if (isDiff) "Next change" else "Next conflict", d.count > 0) { host.diffNavigate(1, null) })
+        if (isDiff) {
+            bar.add(javax.swing.JCheckBox("Show layout changes", d.showLayout).apply {
+                isOpaque = false
+                addActionListener { host.diffShowLayout(isSelected) }
+            })
+        } else if (d.role == "result") {
+            bar.add(button("Take All Incoming", null) { host.mergeChoose(null, "incoming") })
+            bar.add(button("Keep All Current", null) { host.mergeChoose(null, "current") })
+            bar.add(button("Complete Merge", null, bold = true) { host.mergeComplete() })
+        }
+        diffBar.add(bar, BorderLayout.NORTH)
+        val rows = d.conflicts.orEmpty()
+        if (d.role == "result" && rows.isNotEmpty()) {
+            val list = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+            }
+            for (c in rows) {
+                val row = JPanel(BorderLayout()).apply { isOpaque = false }
+                val label = JBLabel((if (c.choice != null) "✓ " else "") + "${c.label} · ${c.how}").apply {
+                    toolTipText = c.details.joinToString("<br>", "<html>", "</html>") { com.intellij.openapi.util.text.StringUtil.escapeXmlEntities(it) }
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    if (c.choice != null) foreground = UIUtil.getContextHelpForeground()
+                    addMouseListener(object : MouseAdapter() {
+                        override fun mouseClicked(e: MouseEvent) = host.diffNavigate(0, c.key)
+                    })
+                }
+                val buttons = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply { isOpaque = false }
+                buttons.add(button("Take Incoming", null, bold = c.choice == "incoming") { host.mergeChoose(c.key, "incoming") })
+                buttons.add(button("Keep Current", null, bold = c.choice == "current") { host.mergeChoose(c.key, "current") })
+                row.add(label, BorderLayout.CENTER)
+                row.add(buttons, BorderLayout.EAST)
+                list.add(row)
+            }
+            diffBar.add(JBScrollPane(list).apply {
+                border = JBUI.Borders.emptyTop(4)
+                preferredSize = Dimension(0, JBUI.scale(minOf(150, 30 * rows.size + 8)))
+                isOpaque = false
+                viewport.isOpaque = false
+            }, BorderLayout.CENTER)
+        }
+        north.revalidate()
+        north.repaint()
+    }
+
     /** Copy, cut, paste and delete for the IDE's edit actions. */
     val clipboardHandler = ClipboardHandler()
 
@@ -175,7 +299,10 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         }
         toolboxPane = ToolPane("Toolbox", icon("toolbox"), toolboxScroll, ::onPaneChanged)
         propsPane = ToolPane("Properties", icon("properties"), propsScroll, ::onPaneChanged)
-        add(toolbar, BorderLayout.NORTH)
+        north.add(toolbar, BorderLayout.NORTH)
+        north.add(diffBar, BorderLayout.SOUTH)
+        diffBar.isVisible = false
+        add(north, BorderLayout.NORTH)
         add(status, BorderLayout.SOUTH)
         add(westDock, BorderLayout.WEST)
         add(eastDock, BorderLayout.EAST)
@@ -262,7 +389,8 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     private fun arrangePanes() {
         for ((pane, left) in listOf(toolboxPane to true, propsPane to false)) {
             pane.parent?.remove(pane)
-            if (!pane.shown) continue
+            // A read-only diagram (a version of the file, a side of a merge) has no toolbox.
+            if (!pane.shown || (pane === toolboxPane && readOnly)) continue
             when (pane.mode) {
                 PaneMode.DockPinned, PaneMode.DockUnpinned -> {
                     pane.border = if (left) JBUI.Borders.customLineRight(JBColor.border()) else JBUI.Borders.customLineLeft(JBColor.border())
@@ -299,16 +427,18 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
      * document still holds what this editor wrote), the validation results,
      * or the reason the file can't be read.
      */
-    fun update(model: FsmModel?, newIssues: List<Issue>, error: String?, submachines: Map<String, SubmachineInfo>?, machines: List<MachineInfo>?) {
+    fun update(model: FsmModel?, newIssues: List<Issue>, error: String?, submachines: Map<String, SubmachineInfo>?, machines: List<MachineInfo>?, mergeFallback: Boolean = false) {
         validationIssues = newIssues
         refreshLayoutIssues()
         if (error != null) {
+            this.mergeFallback = mergeFallback
             showParseError(error)
             renderStatus()
             return
         }
         parseError.isVisible = false
         if (model != null) {
+            received = model.copy()
             val current = session
             if (current == null) {
                 val created = DiagramSession(model)
@@ -341,8 +471,17 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         val s = session ?: return
         // The document can't be read: writing the model shown before would replace the text being fixed.
         if (parseError.isVisible) return
+        if (readOnly) {
+            // A read-only diagram: back to what it shows.
+            received?.let { s.replaceModel(it.copy()) }
+            refreshLayoutIssues()
+            canvas.repaint()
+            renderProps()
+            toast("This diagram is read-only.")
+            return
+        }
         refreshLayoutIssues()
-        host.write(s.model)
+        host.write(s.model)?.let { toast(it) }
         canvas.repaint()
         updateTitle()
         renderStatus()
@@ -447,18 +586,18 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             toast(it)
             return
         }
-        val name = host.askSubmachineName(Extraction.proposedName(s.model, ids)) ?: return
-        val result = Extraction.extract(s.model, ids, name, Hrefs.encodeUri("$name.fsm") + "#sm")
-        val xmi = try {
-            Xmi.toXmi(result.machine).also {
-                // The edited machine must be writable too, before the new file is created (as in the VS Code edition).
-                Xmi.toXmi(result.parent)
+        val name = host.askSubmachineName(Extraction.proposedName(s.model, ids), Extraction.namesInside(s.model, ids)) ?: return
+        val result = Extraction.extract(s.model, ids, name, "$name.fsm")
+        val machine = try {
+            MachineFiles.write(result.machine).also {
+                // The edited machine must be writable too, before the new files are created (as in the VS Code edition).
+                MachineFiles.write(result.parent.copy())
             }
-        } catch (e: XmiException) {
-            toast(e.message ?: "")
+        } catch (e: FormatLossException) {
+            toast("The change can't be saved: ${e.message}")
             return
         }
-        if (!host.createMachineFile(name, xmi)) return
+        if (!host.createMachineFiles(name, machine.modelText, machine.layoutText ?: "")) return
         s.replaceModel(result.parent)
         s.selection = linkedSetOf(result.stateId)
         s.commit()
@@ -581,10 +720,10 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
                 val atTop = v.regions.isNotEmpty() || Labels.activityLines(s.model, v).isNotEmpty()
                 val y = if (atTop) v.y + (if (v.stereotype.isNotEmpty()) 14 else 2) else v.y + v.h / 2 - 12 + (if (v.stereotype.isNotEmpty()) 6 else 0)
                 box = RectD(v.x + 4, y, v.w - 8, 24.0)
-                value = v.name
+                value = Format.shown(v.name)
             } else {
                 box = RectD(v.x + v.w / 2 - 60, v.y + v.h + 2, 120.0, 22.0)
-                value = v.name
+                value = Format.shown(v.name)
             }
         } else {
             val pts = Geometry.route(ix, t!!) ?: return
@@ -678,8 +817,13 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             if (v.text == normalized) return true
             v.text = normalized
         } else {
-            if (v.name == JsWhitespace.trim(text)) return true
-            v.name = JsWhitespace.trim(text)
+            if (Format.shown(v.name) == JsWhitespace.trim(text)) return true
+            val ok = s.nameCheck(v, text)
+            if (!ok.ok) {
+                toast("Name not changed. ${ok.error}")
+                return true
+            }
+            v.name = ok.value
         }
         s.commit()
         renderProps()
@@ -734,7 +878,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             add(action("SVG", icon("export"), host::exportSvg, true).also { it.templatePresentation.description = "Export as SVG" })
             add(action("PNG", icon("export"), host::exportPng, true).also { it.templatePresentation.description = "Export as PNG" })
             addSeparator()
-            add(action("XMI", icon("xmi"), host::openAsText, true).also { it.templatePresentation.description = "Open as XMI text" })
+            add(action("Text", icon("xmi"), host::openAsText, true).also { it.templatePresentation.description = "Open as Text: the model file in the Text tab" })
             addSeparator()
             add(paneToggle(toolboxPane))
             add(paneToggle(propsPane))
@@ -967,7 +1111,8 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         parseError.isOpaque = true
         parseError.border = JBUI.Borders.empty(24)
         parseError.add(Box.createVerticalGlue())
-        parseError.add(centered(wrappingText("This file cannot be displayed because it is not a readable UML state machine (XMI):")))
+        val lines = error.startsWith("Line ")
+        parseError.add(centered(wrappingText(if (lines) "This file cannot be displayed: it is not a valid state machine file." else "This file cannot be displayed:")))
         parseError.add(Box.createVerticalStrut(JBUI.scale(10)))
         parseError.add(centered(wrappingText(error).apply {
             foreground = Theme.current.error
@@ -978,6 +1123,14 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             alignmentX = Component.CENTER_ALIGNMENT
             addActionListener { host.openAsText() }
         })
+        if (mergeFallback) {
+            // A file with merge conflicts whose sides can't be read as machines: the IDE's text merge.
+            parseError.add(Box.createVerticalStrut(JBUI.scale(6)))
+            parseError.add(JButton("Open in the Text Merge Editor").apply {
+                alignmentX = Component.CENTER_ALIGNMENT
+                addActionListener { host.openTextMerge() }
+            })
+        }
         parseError.add(Box.createVerticalGlue())
         parseError.isVisible = true
         layers.revalidate()
@@ -1044,6 +1197,8 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     companion object {
         /** Below the inline editor's layer, above the canvas. */
         private const val PANE_LAYER = 99
+
+        private val ROLE_LABELS = mapOf("old" to "Old", "new" to "New", "incoming" to "Incoming", "current" to "Current", "result" to "Result")
 
         /** Diagram editors on screen, which share one panel layout. */
         private val openPanels = LinkedHashSet<EditorPanel>()

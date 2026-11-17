@@ -14,9 +14,9 @@ import kotlin.test.assertTrue
 
 /** The Trace Player's formats, replay and session, as test/unit/trace.test.ts of the VS Code edition checks them (ported from TraceTests.cs). */
 class TraceTest {
-    private fun examples(file: String) = File(ParityTest.EXAMPLES, file).absoluteFile.normalize().path
+    private fun examples(file: String) = File(TestFiles.EXAMPLES, file).absoluteFile.normalize().path
 
-    private fun example(file: String) = Xmi.fromXmi(File(examples(file)).readText())
+    private fun example(file: String) = Load.loadModel(File(examples(file)).readText())
 
     private fun instance(key: String, model: FsmModel, file: String? = null) = TraceInstance(key, null, file ?: "/$key.fsm", model, ModelIndex(model))
 
@@ -144,7 +144,7 @@ class TraceTest {
         // Java takes ASCII letters and digits only: the other names get Java ones, backreferences included, but not
         // in character classes, quotes or lookbehinds.
         val f = TraceFormats.compile(
-            Json.parse(
+            PlainJson.parse(
                 """{ "name": "Names", "rules": [{ "kind": "enter", "match": "(?<=\\[)(?<my_tag>[a-z]+)\\] (?<${'$'}x>\\w)(?<née>[(?<a_b>]?)\\k<my_tag> \\Q(?<q_q>\\E (?<name>\\w+)=\\k<${'$'}x>\\k<née>" }] }""",
             ),
         )
@@ -156,16 +156,16 @@ class TraceTest {
         )
         // Java's message names the group as written.
         assertTrue(
-            assertFailsWith<TraceFormatException> { TraceFormats.compile(Json.parse("""{ "name": "X", "rules": [{ "kind": "enter", "match": "(?<a_b>a)(?<a_b>b)" }] }""")) }
+            assertFailsWith<TraceFormatException> { TraceFormats.compile(PlainJson.parse("""{ "name": "X", "rules": [{ "kind": "enter", "match": "(?<a_b>a)(?<a_b>b)" }] }""")) }
                 .message!!.contains("<a_b>"),
         )
     }
 
     @Test
     fun reportsBadFormatsAndPicksTheFormatRecognizingTheMostLines() {
-        assertFailsWith<TraceFormatException> { TraceFormats.compile(Json.parse("""{ "name": "X", "rules": [{ "kind": "jump", "match": "a" }] }""")) }
-        assertTrue(assertFailsWith<TraceFormatException> { TraceFormats.compile(Json.parse("""{ "name": "X", "rules": [{ "match": "a(" }] }""")) }.message!!.contains("not a valid regular expression"))
-        assertTrue(assertFailsWith<TraceFormatException> { TraceFormats.compile(Json.parse("""{ "name": "X", "rules": [{ "match": "a" }] }""")) }.message!!.contains("needs a kind"))
+        assertFailsWith<TraceFormatException> { TraceFormats.compile(PlainJson.parse("""{ "name": "X", "rules": [{ "kind": "jump", "match": "a" }] }""")) }
+        assertTrue(assertFailsWith<TraceFormatException> { TraceFormats.compile(PlainJson.parse("""{ "name": "X", "rules": [{ "match": "a(" }] }""")) }.message!!.contains("not a valid regular expression"))
+        assertTrue(assertFailsWith<TraceFormatException> { TraceFormats.compile(PlainJson.parse("""{ "name": "X", "rules": [{ "match": "a" }] }""")) }.message!!.contains("needs a kind"))
         val errors = mutableListOf<String>()
         val formats = TraceFormats.load("""[{ "name": "Bad", "rules": [] }, { "name": "Mine", "rules": [{ "kind": "enter", "match": "-> (?<name>\\w+)" }] }]""", errors)
         assertEquals(listOf("FSM Editor (built-in)", "Mine"), formats.map { it.name })
@@ -213,9 +213,9 @@ class TraceTest {
         val instances = mapOf("Order" to instance("Order", example("Order.fsm")), "Order.Payment" to instance("Order.Payment", example("Payment.fsm"), "/Payment.fsm"))
         val entries = timeline(lines, TraceFormats.builtIn, instances)
         val output = TraceReplay.replay(entries, entries.size - 1, kindsOf(entries))
-        assertEquals(listOf("o_pay"), output.single { it.first.key == "Order" }.second.active)
+        assertEquals(listOf("Payment"), output.single { it.first.key == "Order" }.second.active)
         val payment = output.single { it.first.key == "Order.Payment" }
-        assertEquals(listOf("p_auth"), payment.second.active)
+        assertEquals(listOf("Authorizing"), payment.second.active)
         assertEquals("/Payment.fsm", payment.first.file)
     }
 
@@ -281,25 +281,25 @@ class TraceTest {
         assertEquals(emptyList<String>(), s.problems)
         assertFalse(log.needsMachine)
 
-        assertEquals(listOf("o_final"), view(s, "Order.fsm").instances.single().active)
+        assertEquals(listOf("final1*"), view(s, "Order.fsm").instances.single().active)
         assertEquals(-1, view(s, "Order.fsm").instances.single().color)
-        assertEquals(listOf("v_final"), view(s, "MediaPlayer.fsm").instances.single().active)
+        assertEquals(listOf("final1*"), view(s, "MediaPlayer.fsm").instances.single().active)
         // Payment runs alone first, then inside Order: two instances, colored in that order.
         val payment = view(s, "Payment.fsm")
         assertEquals(listOf("Payment|0", "Order.Payment|1"), payment.instances.map { "${it.label}|${it.color}" })
-        assertEquals(listOf(0), payment.active["p_final"]?.toList())
+        assertEquals(listOf(0), payment.active["final1*"]?.toList())
 
         // Back in time, to the second checkout: Order in its Payment state, the Payment instance inside it authorizing.
-        val at = s.entries.withIndex().filter { (_, e) -> e.record.machine == "Order.Payment" && e.record.id == "p_auth" && e.record.kind == TraceKind.Enter }[1].index
+        val at = s.entries.withIndex().filter { (_, e) -> e.record.machine == "Order.Payment" && e.record.id == "Authorizing" && e.record.kind == TraceKind.Enter }[1].index
         s.seek(at)
         assertFalse(s.live)
-        assertEquals(listOf("o_pay"), view(s, "Order.fsm").instances.single().active)
-        assertEquals(listOf("p_auth"), view(s, "Payment.fsm").instances.single { it.label == "Order.Payment" }.active)
-        assertTrue("p_auth" in view(s, "Payment.fsm").current)
+        assertEquals(listOf("Payment"), view(s, "Order.fsm").instances.single().active)
+        assertEquals(listOf("Authorizing"), view(s, "Payment.fsm").instances.single { it.label == "Order.Payment" }.active)
+        assertTrue("Authorizing" in view(s, "Payment.fsm").current)
         assertEquals("▶ Trace · event checkout", view(s, "Order.fsm").statusText)
         // Order's event is the step of the Payment instance inside it too: not its own last event (cancel), nor that transition.
         assertEquals("▶ Trace · event checkout", view(s, "Payment.fsm").statusText)
-        assertEquals(listOf("pt1"), view(s, "Payment.fsm").instances.single { it.label == "Order.Payment" }.taken)
+        assertEquals(listOf("Payment.initial#1"), view(s, "Payment.fsm").instances.single { it.label == "Order.Payment" }.taken)
         val rows = s.rows()
         val cur = rows.single { it.index == s.cursor }
         assertTrue(rows.all { it.resolved })
@@ -347,7 +347,7 @@ class TraceTest {
         assertTrue(s.readNew(log))
         assertEquals(2, s.entries.size)
         assertEquals(1, s.cursor)
-        assertEquals(listOf("o_cart"), view(s, "Order.fsm").instances.single().active)
+        assertEquals(listOf("Cart"), view(s, "Order.fsm").instances.single().active)
         assertFalse(s.readNew(log))
         // Truncated (rotated): read again from the start.
         file.writeText("2026-11-11T10:00:01.000Z fsm Order transition ot1 initial -> Cart\n")
@@ -379,7 +379,7 @@ class TraceTest {
         s.seek(1)
         val order = view(s, "Order.fsm").instances.single()
         assertEquals("Order (door.log)", order.label)
-        assertEquals(listOf("o_pay"), order.active)
+        assertEquals(listOf("Payment"), order.active)
         assertFalse(s.rows().last().resolved)
         dir.deleteRecursively()
     }

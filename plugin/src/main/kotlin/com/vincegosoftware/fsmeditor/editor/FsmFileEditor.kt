@@ -1,254 +1,197 @@
 package com.vincegosoftware.fsmeditor.editor
 
 import com.intellij.ide.ui.LafManagerListener
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.DocumentReference
 import com.intellij.openapi.command.undo.DocumentReferenceManager
 import com.intellij.openapi.command.undo.DocumentReferenceProvider
 import com.intellij.openapi.command.undo.UndoManager
-import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.colors.EditorColorsListener
 import com.intellij.openapi.editor.colors.EditorColorsManager
-import com.intellij.openapi.editor.event.DocumentEvent
-import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorLocation
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
-import com.intellij.openapi.vfs.ReadonlyStatusHandler
-import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vcs.AbstractVcsHelper
+import com.intellij.openapi.vcs.ProjectLevelVcsManager
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.util.Alarm
-import com.intellij.util.concurrency.AppExecutorUtil
+import com.intellij.ui.JBSplitter
 import com.vincegosoftware.fsmeditor.FsmDocuments
-import com.vincegosoftware.fsmeditor.FsmIcons
-import com.vincegosoftware.fsmeditor.MachineNameValidator
-import com.vincegosoftware.fsmeditor.codegen.CodeGeneration
+import com.vincegosoftware.fsmeditor.core.Format
 import com.vincegosoftware.fsmeditor.core.FsmModel
-import com.vincegosoftware.fsmeditor.core.Issue
-import com.vincegosoftware.fsmeditor.core.MachineInfo
-import com.vincegosoftware.fsmeditor.core.SubmachineInfo
+import com.vincegosoftware.fsmeditor.core.MachineTexts
+import com.vincegosoftware.fsmeditor.core.MergeHost
+import com.vincegosoftware.fsmeditor.core.MergeSession
+import com.vincegosoftware.fsmeditor.core.Merge
 import com.vincegosoftware.fsmeditor.core.TraceView
-import com.vincegosoftware.fsmeditor.core.Validation
-import com.vincegosoftware.fsmeditor.core.XmiException
-import com.vincegosoftware.fsmeditor.core.XmlParseException
-import com.vincegosoftware.fsmeditor.core.Xmi
-import com.vincegosoftware.fsmeditor.services.FsmWorkspace
-import com.vincegosoftware.fsmeditor.trace.TracePlayerService
+import com.vincegosoftware.fsmeditor.services.Git
 import java.beans.PropertyChangeListener
-import java.io.IOException
+import java.io.File
 import javax.swing.JComponent
-import kotlin.math.min
+import javax.swing.JPanel
+import java.awt.BorderLayout
 
 /**
- * The diagram tab of a state machine file. The IDE's document holds the XMI
- * (the Text tab edits the same document); the diagram works on the parsed
- * model. Diagram edits are written back as one undoable command, and document
- * changes (undo, the Text tab, a reload) are parsed and shown on the diagram.
- * After each change the machine is validated against the other machines of
- * the project.
+ * The Diagram tab of a state machine file. The machine is two files, the model and its layout: the IDE's documents
+ * hold their texts (the Text tab edits the model's), and the diagram edits both as one undoable command ([FileSource]).
+ * Saving, the modified mark and undo/redo are the IDE's, over both documents.
+ *
+ * A file with merge conflicts opens as the diagram merge: the result (this file, starting as the current side) beside
+ * the incoming and current sides, read-only, until Complete Merge.
  */
 class FsmFileEditor(private val project: Project, private val file: VirtualFile) :
-    UserDataHolderBase(), FileEditor, DocumentReferenceProvider, EditorHost {
+    UserDataHolderBase(), FileEditor, DocumentReferenceProvider, PaneSessionHost {
 
-    private val document: Document = FileDocumentManager.getInstance().getDocument(file)
-        ?: throw IllegalStateException("No document for ${file.path}")
-    private val panel = EditorPanel(this)
-    private val syncAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
-    private var generation = 0
-    /** The XMI the diagram shows (the last one this editor wrote or loaded), with its model. */
-    private var echoText: String? = null
-    private var echoModel: FsmModel? = null
+    val source = FileSource(project, file, this)
+    val pane = DiagramPane(project, source, file, this, { undo() } to { redo() })
+    private val root = JPanel(BorderLayout())
+    private var merge: MergeSession? = null
+    private val sides = ArrayList<DiagramPane>()
 
     init {
-        document.addDocumentListener(object : DocumentListener {
-            override fun documentChanged(event: DocumentEvent) = scheduleSync()
-        }, this)
-        FsmWorkspace.getInstance(project).onAnyMachineChanged(this) { scheduleSync() }
+        root.add(pane.panel, BorderLayout.CENTER)
+        pane.sessionHost = this
+        pane.onOpenTextMerge = ::openTextMerge
         val bus = ApplicationManager.getApplication().messageBus.connect(this)
-        bus.subscribe(LafManagerListener.TOPIC, LafManagerListener { panel.themeChanged() })
-        bus.subscribe(EditorColorsManager.TOPIC, EditorColorsListener { panel.themeChanged() })
-        scheduleSync()
-        project.getServiceIfCreated(TracePlayerService::class.java)?.let { panel.setTrace(it.viewFor(file.path)) }
+        bus.subscribe(LafManagerListener.TOPIC, LafManagerListener { themeChanged() })
+        bus.subscribe(EditorColorsManager.TOPIC, EditorColorsListener { themeChanged() })
+        // A file with merge conflicts opens as the result of the diagram merge, its two sides beside it.
+        if (source.merge != null && !source.readOnly) ApplicationManager.getApplication().invokeLater({ openMerge() }, project.disposed)
+    }
+
+    private fun themeChanged() {
+        pane.panel.themeChanged()
+        sides.forEach { it.panel.themeChanged() }
     }
 
     /** The Trace Player's highlights of this machine, or null. */
-    fun showTrace(view: TraceView?) = panel.setTrace(view)
+    fun showTrace(view: TraceView?) = pane.showTrace(view)
 
-    override fun showTracePlayer() {
-        TracePlayerService.getInstance(project).show()
-    }
+    fun exportPng() = pane.exportPng()
 
-    private fun scheduleSync() {
-        syncAlarm.cancelAllRequests()
-        syncAlarm.addRequest(::sync, 30)
-    }
-
-    // ---------------------------------------------------------------- document → diagram
-
-    private class Resolved(val issues: List<Issue>, val submachines: Map<String, SubmachineInfo>, val machines: List<MachineInfo>)
-
-    private fun sync() {
-        if (project.isDisposed) return
-        val gen = ++generation
-        val text = document.text
-        val echo = echoText != null && echoText == text
-        var model: FsmModel? = null
-        var error: String? = null
-        try {
-            // Our own edit coming back: keep the model the diagram already has.
-            model = when {
-                echo -> echoModel!!.copy()
-                text.isBlank() -> FsmModel.createDefault(file.nameWithoutExtension)
-                else -> Xmi.fromXmi(text)
-            }
-        } catch (e: XmlParseException) {
-            error = e.message
-        } catch (e: XmiException) {
-            error = e.message
-        }
-        if (model == null) {
-            echoText = null
-            panel.update(null, emptyList(), error, null, null)
-            return
-        }
-        val snapshot = model.copy()
-        val workspace = FsmWorkspace.getInstance(project)
-        ReadAction.nonBlocking<Resolved> {
-            val resolved = workspace.resolve(file, snapshot)
-            Resolved(Validation.validate(snapshot, resolved.second), resolved.second, resolved.first)
-        }
-            .expireWith(this)
-            .finishOnUiThread(ModalityState.any()) { r ->
-                if (gen != generation) return@finishOnUiThread // a newer sync is on its way
-                // The document changed meanwhile (a diagram edit written during validation): showing this older text
-                // would take the diagram back to it, and make the edit look like a change from outside. It syncs again.
-                if (document.text != text) {
-                    scheduleSync()
-                    return@finishOnUiThread
-                }
-                if (!echo) {
-                    // The diagram now shows this text: a later change back to the last text written,
-                    // such as a redo after an undo, is not our own edit.
-                    echoText = text
-                    echoModel = model.copy()
-                }
-                panel.update(if (echo) null else model, r.issues, null, r.submachines, r.machines)
-            }
-            .submit(AppExecutorUtil.getAppExecutorService())
-    }
-
-    // ---------------------------------------------------------------- diagram → document
-
-    override fun write(model: FsmModel) {
-        val old = document.text
-        val xmi = try {
-            Xmi.toXmi(model)
-        } catch (e: XmiException) {
-            panel.toast("The change could not be saved: ${e.message}")
-            // Back to what the document holds.
-            echoText = null
-            scheduleSync()
-            return
-        }
-        echoText = xmi
-        echoModel = model.copy()
-        if (xmi == old) return
-        if (!document.isWritable && ReadonlyStatusHandler.getInstance(project).ensureFilesWritable(listOf(file)).hasReadonlyFiles()) {
-            panel.toast("The file is read-only; the change was not saved.")
-            echoText = null
-            scheduleSync()
-            return
-        }
-        // Replace only what changed, as one undoable command.
-        var prefix = 0
-        val max = min(old.length, xmi.length)
-        while (prefix < max && old[prefix] == xmi[prefix]) prefix++
-        var suffix = 0
-        while (suffix < max - prefix && old[old.length - 1 - suffix] == xmi[xmi.length - 1 - suffix]) suffix++
-        WriteCommandAction.writeCommandAction(project).withName("Edit State Machine").run<RuntimeException> {
-            document.replaceString(prefix, old.length - suffix, xmi.substring(prefix, xmi.length - suffix))
-        }
-    }
-
-    override fun undo() {
+    fun undo() {
         val undo = UndoManager.getInstance(project)
         if (undo.isUndoAvailable(this)) undo.undo(this)
     }
 
-    override fun redo() {
+    fun redo() {
         val undo = UndoManager.getInstance(project)
         if (undo.isRedoAvailable(this)) undo.redo(this)
     }
 
-    override fun generateCode() = CodeGeneration.generate(project, file)
-
-    override fun exportSvg() {
-        val svg = panel.exportSvg() ?: return
-        FsmDocuments.saveSvg(project, file, svg)
+    /** The IDE's merge of the file's text (Git's conflict resolution), for conflicts the diagram merge can't open. */
+    private fun openTextMerge() {
+        val provider = ProjectLevelVcsManager.getInstance(project).getVcsFor(file)?.mergeProvider
+        if (provider != null) AbstractVcsHelper.getInstance(project).showMergeDialog(listOf(file), provider)
+        else FsmDocuments.openAsText(project, file)
     }
 
-    override fun exportPng() {
-        val image = panel.exportPng() ?: return
-        FsmDocuments.savePng(project, file, image)
-    }
+    // ---------------------------------------------------------------- merge
 
-    override fun openAsText() = FsmDocuments.openAsText(project, file)
-
-    override fun openSubmachine(href: String) {
-        if (href.isEmpty()) return
-        if (!FsmDocuments.openHref(project, file, href)) {
-            panel.toast("The referenced state machine file ${href.split('#')[0]} does not exist.")
+    private fun openMerge() {
+        val m = source.merge ?: return
+        if (merge != null || disposed) return
+        val incoming = DiagramPane(project, FixedSource(file.path, m.incoming), file, this)
+        val current = DiagramPane(project, FixedSource(file.path, m.current), file, this)
+        val read = { t: MachineTexts -> Format.readMachine(t.model, t.layout).model }
+        val session = MergeSession(file.path, m.current, m.incoming, m.base, read, object : MergeHost {
+            override fun edit(model: FsmModel, label: String): String? = source.edit(model)?.ifEmpty { null }
+            override fun state(): Any = source.state
+        }) { source.state.model?.copy() }
+        merge = session
+        for (p in listOf(incoming, current)) {
+            p.sessionHost = this
+            p.sessionChanged = { session.update() }
+            sides.add(p)
         }
-    }
-
-    override fun askSubmachineName(proposed: String): String? {
-        val folder = file.parent
-        if (folder == null) {
-            panel.toast("Save the state machine first: the submachine goes in a file next to it.")
-            return null
-        }
-        var value = proposed
-        var n = 2
-        while (folder.findChild("$value.fsm") != null) value = proposed + n++
-        return Messages.showInputDialog(
-            project, "Name of the new state machine, saved next to this one:", "Extract to Submachine", FsmIcons.FILE, value, MachineNameValidator(folder),
-        )?.trim()
-    }
-
-    override fun createMachineFile(name: String, xmi: String): Boolean {
-        val folder = file.parent ?: return false
-        return try {
-            WriteCommandAction.writeCommandAction(project).withName("Extract to Submachine").run<IOException> {
-                VfsUtil.saveText(folder.createChildData(this@FsmFileEditor, "$name.fsm"), xmi)
+        pane.sessionChanged = { session.update() }
+        session.attach(incoming, "incoming")
+        session.attach(current, "current")
+        session.attach(pane, "result")
+        root.removeAll()
+        root.add(JBSplitter(false, 0.34f).apply {
+            firstComponent = pane.panel
+            secondComponent = JBSplitter(false, 0.5f).apply {
+                firstComponent = incoming.panel
+                secondComponent = current.panel
             }
-            true
-        } catch (ex: IOException) {
-            panel.toast("$name.fsm could not be created: ${ex.message}")
-            false
+        }, BorderLayout.CENTER)
+        root.revalidate()
+        root.repaint()
+        if (session.conflictCount == 0) pane.toast("The two sides of the conflicts describe the same machine.")
+    }
+
+    /** Complete Merge: writes the result (without markers), saves both files, marks them resolved in Git, and closes the sides. */
+    override fun complete(pane: DiagramPane) {
+        if (merge == null) return
+        // Nothing chosen: the documents still hold the markers, and the result is the current side.
+        if (Merge.hasConflictMarkers(FileDocumentManager.getInstance().getDocument(file)?.text)) source.writeTexts(source.state)
+        source.save()
+        // A save that failed leaves the merge as it is: the file keeps its conflicts on disk.
+        if (source.documents().any { FileDocumentManager.getInstance().isDocumentUnsaved(it) }) {
+            NotificationGroupManager.getInstance().getNotificationGroup("FSM Editor")
+                .createNotification("${file.name}: the merge could not be completed, the files could not be saved. The file keeps its conflicts.", NotificationType.ERROR).notify(project)
+            return
         }
+        val layout = source.layoutFile()
+        val files = listOfNotNull(File(file.path), layout?.let { File(it.path) })
+        val name = file.name
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val resolved = Git.rootOf(files[0]) == null || Git.add(*files.toTypedArray())
+            ApplicationManager.getApplication().invokeLater({
+                file.refresh(true, false)
+                val group = NotificationGroupManager.getInstance().getNotificationGroup("FSM Editor")
+                if (!resolved) group.createNotification("The merge was saved, but could not be marked resolved in Git.", NotificationType.WARNING).notify(project)
+                else group.createNotification("$name: merge completed.", NotificationType.INFORMATION).notify(project)
+            }, project.disposed)
+        }
+        endMerge()
+    }
+
+    private fun endMerge() {
+        merge = null
+        source.merge = null
+        pane.sessionChanged = null
+        for (p in sides) Disposer.dispose(p)
+        sides.clear()
+        pane.showDiff(null)
+        root.removeAll()
+        root.add(pane.panel, BorderLayout.CENTER)
+        root.revalidate()
+        root.repaint()
+    }
+
+    override fun navigate(pane: DiagramPane, dir: Int, key: String?) {
+        merge?.navigate(dir, key)
+    }
+
+    override fun choose(pane: DiagramPane, key: String?, side: String) {
+        merge?.choose(key, side)
+    }
+
+    override fun viewChanged(pane: DiagramPane, x: Double, y: Double, zoom: Double) {
+        for (p in sides + this.pane) if (p !== pane) p.setView(x, y, zoom)
     }
 
     // ---------------------------------------------------------------- FileEditor
 
     override fun getDocumentReferences(): Collection<DocumentReference> =
-        listOf(DocumentReferenceManager.getInstance().create(document))
+        source.documents().map { DocumentReferenceManager.getInstance().create(it) }
 
-    override fun getComponent(): JComponent = panel
+    override fun getComponent(): JComponent = root
 
-    override fun getPreferredFocusedComponent(): JComponent = panel.canvas
+    override fun getPreferredFocusedComponent(): JComponent = pane.panel.canvas
 
     override fun getName() = "Diagram"
 
     override fun setState(state: FileEditorState) {}
 
-    override fun isModified() = FileDocumentManager.getInstance().isFileModified(file)
+    override fun isModified() = source.documents().any { FileDocumentManager.getInstance().isDocumentUnsaved(it) }
 
     override fun isValid() = file.isValid
 
@@ -260,5 +203,9 @@ class FsmFileEditor(private val project: Project, private val file: VirtualFile)
 
     override fun getFile(): VirtualFile = file
 
-    override fun dispose() {}
+    private var disposed = false
+
+    override fun dispose() {
+        disposed = true
+    }
 }

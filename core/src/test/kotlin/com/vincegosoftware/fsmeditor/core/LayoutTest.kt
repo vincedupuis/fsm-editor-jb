@@ -168,7 +168,7 @@ class LayoutTest {
         s.selection = linkedSetOf("A")
         val data = ClipboardJson.tryRead(ClipboardJson.write(s.collectSelection()!!))
         s.paste(data, PointD(350.0, 300.0))
-        val copy = s.model.vertices.single { it.name == "A" && it.id != "A" }
+        val copy = s.model.vertices.single { it.name == "A2" }
         assertEquals(Triple("r2", 350.0, 300.0), Triple(copy.parent, copy.x, copy.y))
         assertEquals(360.0 to 260.0, s.v("P").w to s.v("P").h)
     }
@@ -214,14 +214,13 @@ class LayoutTest {
     fun aStateInItsOwnRegionNeitherGrowsForeverNorOverflowsTheWriter() {
         // A file edited by hand: state S reuses the id of the top-level region for its own region.
         val m = FsmModel()
-        m.id = "sm"
         m.name = "T"
         m.regions.add(Region("r0"))
         m.vertices.add(state("S", "r0", 50.0, 50.0, 200.0, 100.0, "r0"))
         m.vertices.add(state("A", "r0", 60.0, 90.0))
         val s = DiagramSession(m)
         assertNotNull(s.createVertex("state", PointD(500.0, 500.0)))
-        assertFailsWith<XmiException> { Xmi.toXmi(s.model) }
+        assertTrue(Format.writeMachine(s.model).lost.isNotEmpty())
     }
 
     @Test

@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 class EditingTest {
     private fun newSession() = DiagramSession(FsmModel.createDefault("Test"))
 
-    private fun example(file: String) = DiagramSession(Xmi.fromXmi(File(ParityTest.EXAMPLES, file).readText()))
+    private fun example(file: String) = DiagramSession(Load.loadModel(TestFiles.example(file), TestFiles.example("$file.layout")))
 
     @Test
     fun createsStatesInTheRegionUnderThePoint() {
@@ -92,9 +92,10 @@ class EditingTest {
         val copy = s.index.vertex(s.selection.single())!!
         assertNotEquals(composite.id, copy.id)
         assertEquals(composite.x + 20, copy.x)
-        assertEquals(composite.name, copy.name)
+        // Names are unique: the copy takes the next free one.
+        assertEquals(composite.name + "2", copy.name)
         assertEquals(s.index.descendants(composite).size, s.index.descendants(copy).size)
-        assertTrue(Validation.validate(s.model).none { it.message.startsWith("Duplicate id") })
+        assertTrue(Validation.validate(s.model).none { "is used more than once" in it.message })
     }
 
     @Test
@@ -155,7 +156,7 @@ class EditingTest {
         // The background color tints the regions.
         s.setColor(v, "background", "#30a46c")
         assertTrue("style=\"stop-color:#dcefe6\"/></linearGradient>" in SvgExport.export(s))
-        val back = Xmi.fromXmi(Xmi.toXmi(s.model)).vertices.first { it.id == v.id }
+        val back = TestFiles.roundTrip(s.model).vertices.first { it.id == v.id }
         assertEquals("#0090ff", back.color)
         assertEquals("#30a46c", back.itemColors["background"])
         // One color for both is a plain fill.
@@ -172,7 +173,7 @@ class EditingTest {
         s.setColor(v, "entry", "#30a46c")
         s.setColor(t, "guard", "#0090ff")
         s.setColor(t, null, "not a color")
-        val back = Xmi.fromXmi(Xmi.toXmi(s.model))
+        val back = TestFiles.roundTrip(s.model)
         val bv = back.vertices.first { it.id == v.id }
         assertEquals("#e5484d", bv.color)
         assertEquals("#30a46c", bv.itemColors["entry"])
@@ -194,7 +195,7 @@ class EditingTest {
         assertNull(s.applyLabel(t2, "play, after(2s) [isReady() && !isBusy()] / doIt(); log()"))
         assertEquals(listOf("play", "after(2s)"), t2.triggers)
         assertEquals("isReady() && !isBusy()", t2.guard)
-        assertEquals("doIt(); log()", t2.effect)
+        assertEquals("doIt(); log()", t2.action)
         assertEquals("play, after(2s) [isReady() && !isBusy()] / doIt(); log()", Labels.transitionLabel(s.model, t2))
         assertTrue(s.applyLabel(t2, "go [volume > 3]")!!.startsWith("Guard:"))
         assertEquals("isReady() && !isBusy()", t2.guard)
@@ -222,9 +223,9 @@ class EditingTest {
     fun addAllReferencesUsesTheSubmachinePoints() {
         val s = newSession()
         val sub = s.createVertex("submachine", PointD(400.0, 300.0))!!
-        s.setSubmachine(sub, "Payment.fsm#sm")
+        s.setSubmachine(sub, "Payment.fsm")
         s.submachines = mapOf(
-            "Payment.fsm#sm" to SubmachineInfo(
+            "Payment.fsm" to SubmachineInfo(
                 true,
                 "Payment",
                 points = listOf(
@@ -240,7 +241,7 @@ class EditingTest {
         assertTrue(refs.filter { it.pointKind == PointKind.Entry }.all { it.centerX == sub.x })
         assertTrue(refs.filter { it.pointKind == PointKind.Exit }.all { it.centerX == sub.x + sub.w })
         assertTrue(s.freePoints(sub).isEmpty())
-        assertEquals("Payment", s.machineLabel("Payment.fsm#sm"))
+        assertEquals("Payment", s.machineLabel("Payment.fsm"))
     }
 
     @Test
@@ -278,17 +279,18 @@ class EditingTest {
     }
 
     @Test
-    fun hrefsAreRelativeAndEncoded() {
+    fun submachinePathsAreRelative() {
         val root = System.getProperty("java.io.tmpdir")
         val doc = Paths.get(root, "models", "Order.fsm").toString()
         val other = Paths.get(root, "models", "sub dir", "Payment.fsm").toString()
-        val href = Hrefs.forFile(doc, other, "sm")
-        assertEquals("sub%20dir/Payment.fsm#sm", href)
-        val (file, id) = Hrefs.resolve(doc, href)
+        val path = Hrefs.forFile(doc, other)
+        assertEquals("sub dir/Payment.fsm", path)
+        assertEquals(Paths.get(other).toAbsolutePath().normalize().toString(), Hrefs.resolvePath(doc, path))
+        assertEquals("../Order.fsm", Hrefs.forFile(other, doc))
+        // An old file's href: encoded, with the machine's id.
+        val (file, id) = Hrefs.resolve(doc, "sub%20dir/Payment.fsm#sm")
         assertEquals(Paths.get(other).toAbsolutePath().normalize().toString(), file)
         assertEquals("sm", id)
-        assertEquals("../Order.fsm#sm", Hrefs.forFile(other, doc, "sm"))
-        assertEquals("sub dir/é#x", Hrefs.decodeUri(Hrefs.encodeUri("sub dir/é#x")))
         assertEquals("100%", Hrefs.decodeUri("100%"))
         assertEquals("My Machine.fsm", Hrefs.decodeUri("My%20Machine.fsm"))
         assertEquals("café.fsm", Hrefs.decodeUri("caf%C3%A9.fsm"))
@@ -298,16 +300,6 @@ class EditingTest {
         assertEquals("a%E0A.fsm", Hrefs.decodeUri("a%E0%41.fsm"))
         assertEquals("a%C0%80%", Hrefs.decodeUri("a%C0%80%"))
         assertEquals("sm", Hrefs.resolve("/tmp/M.fsm", "a.fsm#sm#x").second)
-    }
-
-    @Test
-    fun hrefsEncodeHashAndQuestionMarkInFileNamesAndDecodeThemBack() {
-        for (path in listOf("sub/a#b?c.fsm", "My Machine.fsm", "café 50%.fsm", "a&b;c.fsm")) {
-            val href = "${Hrefs.encodeUri(path)}#sm"
-            assertEquals(2, href.split('#').size)
-            assertEquals(path, Hrefs.decodeUri(href.split('#')[0]))
-        }
-        assertEquals("a%23b%3F.fsm", Hrefs.encodeUri("a#b?.fsm"))
     }
 
     @Test
@@ -595,7 +587,7 @@ class EditingTest {
         assertNotEquals("", g)
         assertEquals(g, named(s, "Paused").group)
         assertEquals(listOf("Stopped", "Paused"), s.groupMembers(g).map { it.name })
-        assertTrue("<group id=\"$g\" members=\"${named(s, "Stopped").id} ${named(s, "Paused").id}\"/>" in Xmi.toXmi(s.model))
+        assertEquals(listOf("Stopped", "Paused"), TestFiles.roundTrip(s.model).vertices.filter { it.group.isNotEmpty() }.map { it.name })
 
         select(s, "Paused")
         assertTrue(s.canUngroup)
