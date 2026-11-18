@@ -26,8 +26,8 @@ import java.io.File
  */
 class FsmEditorTest : BasePlatformTestCase() {
     private val examples = File(System.getProperty("fsm.examples") ?: "../examples")
-    /** Old files (XMI), the core tests' fixtures. */
-    private val old = File(examples.parentFile, "core/src/test/resources/fixtures/old")
+    /** Old files (XMI) of the examples. */
+    private val old = File(examples.parentFile, "plugin/src/test/resources/old")
 
     private fun waitFor(condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + 10_000

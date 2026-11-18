@@ -9,7 +9,7 @@ object ClipboardJson {
         "{\"fsmClipboard\":1,\"vertices\":[" + data.vertices.joinToString(",", transform = ::writeVertex) +
             "],\"transitions\":[" + data.transitions.joinToString(",", transform = ::writeTransition) + "]}"
 
-    private fun writeVertex(v: Vertex): String {
+    internal fun writeVertex(v: Vertex): String {
         val o = JsonObjectWriter()
         o.str("id", v.id).str("type", v.type.key).str("name", v.name).str("parent", v.parent)
             .num("x", v.x).num("y", v.y).num("w", v.w).num("h", v.h)
@@ -27,7 +27,7 @@ object ClipboardJson {
         return o.toString()
     }
 
-    private fun writeTransition(t: Transition): String {
+    internal fun writeTransition(t: Transition): String {
         val o = JsonObjectWriter()
         o.str("id", t.id).str("source", t.source).str("target", t.target).str("kind", t.kind.key)
             .raw("triggers", stringArray(t.triggers)).str("guard", t.guard).str("action", t.action)
@@ -46,9 +46,9 @@ object ClipboardJson {
         if (keys.isNotEmpty()) o.raw("itemColors", keys.fold(JsonObjectWriter()) { w, k -> w.str(k, items[k]) }.toString())
     }
 
-    private fun readColor(o: Map<*, *>, key: String): String = str(o, key).takeIf(ElementColors::isColor) ?: ""
+    internal fun readColor(o: Map<*, *>, key: String): String = str(o, key).takeIf(ElementColors::isColor) ?: ""
 
-    private fun readItemColors(o: Map<*, *>): MutableMap<String, String> {
+    internal fun readItemColors(o: Map<*, *>): MutableMap<String, String> {
         val items = linkedMapOf<String, String>()
         val d = o["itemColors"] as? Map<*, *> ?: return items
         for (k in ElementColors.ITEM_KEYS) {
@@ -58,9 +58,9 @@ object ClipboardJson {
         return items
     }
 
-    private fun stringArray(items: List<String>) = "[" + items.joinToString(",", transform = Json::quote) + "]"
+    internal fun stringArray(items: List<String>) = "[" + items.joinToString(",", transform = PlainJson::quote) + "]"
 
-    private class JsonObjectWriter {
+    internal class JsonObjectWriter {
         private val parts = ArrayList<String>()
 
         fun raw(key: String, json: String): JsonObjectWriter {

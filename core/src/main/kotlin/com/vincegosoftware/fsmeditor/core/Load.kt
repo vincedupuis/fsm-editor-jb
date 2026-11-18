@@ -13,18 +13,9 @@ object Load {
      * automatically). Throws [LoadException] when the text can't be read (the first problem, with its line).
      */
     fun loadModel(text: String, layout: String? = null): FsmModel {
-        if (Format.isOldFormat(text)) {
-            try {
-                return Xmi.fromXmi(text)
-            } catch (e: XmlParseException) {
-                throw LoadException(e.message ?: "")
-            } catch (e: XmiException) {
-                throw LoadException(e.message ?: "")
-            }
-        }
-        val read = Format.readMachine(text, layout)
-        if (read.failed) throw LoadException("Line ${read.problems!![0].line}: ${read.problems[0].message}")
-        return read.model!!
+        val r = Common.call("load", Common.args("model" to Common.str(text), "layout" to Common.str(layout))) as Map<*, *>
+        (r["error"] as? String)?.let { throw LoadException(it) }
+        return ModelJson.read(r["model"])
     }
 
     /**
@@ -37,15 +28,7 @@ object Load {
 
     /** The submachine paths of a file's text (either format); none when it can't be read. */
     fun submachineFilesOf(text: String): List<String> {
-        if (!Format.isOldFormat(text)) {
-            // Paths only: no layout to apply.
-            val read = Format.readModel(text)
-            return if (read.failed) emptyList() else submachineFiles(read.model!!, false)
-        }
-        return try {
-            submachineFiles(loadModel(text), true)
-        } catch (_: LoadException) {
-            emptyList()
-        }
+        val r = Common.call("load", Common.args("model" to Common.str(text))) as Map<*, *>
+        return if (r.containsKey("error")) emptyList() else ModelJson.strings(r, "submachines")
     }
 }

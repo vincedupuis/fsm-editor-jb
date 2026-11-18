@@ -28,8 +28,11 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
-    // The tests read the shared examples, and fsm-cli's test cases and schemas (copied into plugin/cli by scripts/fetch-cli.sh).
+    // The tests read the shared examples, and run fsm-editor-common's sidecar and its interface's cases (copied into
+    // plugin/cli by scripts/fetch-common.sh).
     systemProperty("fsm.examples", rootProject.file("examples").absolutePath)
-    systemProperty("fsm.cases", rootProject.file("plugin/cli/cases").absolutePath)
-    systemProperty("fsm.schemas", rootProject.file("plugin/cli/schemas").absolutePath)
+    systemProperty("fsm.cli", rootProject.file("plugin/cli").absolutePath)
+    // The sidecar of this machine (plugin/cli/<platform>/), when scripts/fetch-common.sh copied it.
+    fileTree(rootProject.file("plugin/cli")).matching { include("*/fsm-editor-common*") }.files.firstOrNull()
+        ?.let { systemProperty("fsm.common", it.absolutePath) }
 }

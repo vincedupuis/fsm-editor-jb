@@ -44,15 +44,20 @@ internal class TestBuilder(name: String, kind: MachineKind = MachineKind.Behavio
 internal object TestFiles {
     val EXAMPLES: String = System.getProperty("fsm.examples") ?: "../examples"
 
-    /** fsm-cli's test cases and schemas, copied into plugin/cli by scripts/fetch-cli.sh. */
-    val CASES: File = File(System.getProperty("fsm.cases") ?: "../plugin/cli/cases")
-    val SCHEMAS: File = File(System.getProperty("fsm.schemas") ?: "../plugin/cli/schemas")
+    /** fsm-editor-common's sidecar and its interface's cases, copied into plugin/cli by scripts/fetch-common.sh. */
+    val CLI: File = File(System.getProperty("fsm.cli") ?: "../plugin/cli")
+    val API_CASES: File = File(CLI, "api-cases/cases.jsonl")
+
+    init {
+        // The sidecar of this machine's platform folder (the one scripts/fetch-common.sh copied), unless given.
+        if (Common.executablePath == null && System.getenv("FSM_EDITOR_COMMON") == null) {
+            Common.executablePath = CLI.listFiles { f -> f.isDirectory }?.mapNotNull { d ->
+                d.listFiles { f -> f.name.startsWith("fsm-editor-common") }?.firstOrNull()
+            }?.firstOrNull()?.path
+        }
+    }
 
     fun example(file: String) = File(EXAMPLES, file).readText()
-
-    fun fixture(name: String) = File(TestFiles::class.java.getResource("/fixtures/$name")!!.toURI())
-
-    fun old(name: String) = fixture("old/$name.fsm").readText()
 
     /** A machine's two files read; fails on problems. */
     fun read(model: String, layout: String? = null): ReadMachine {
@@ -66,9 +71,7 @@ internal object TestFiles {
 
     /** Writes a copy of a model (generated names given), as the editor saves it. */
     fun write(model: FsmModel): Written {
-        val m = model.copy()
-        Format.assignNames(m)
-        val w = Format.writeMachine(m)
+        val w = Format.writeMachine(model.copy())
         assertTrue(w.lost.isEmpty(), w.lost.joinToString("; "))
         return w
     }

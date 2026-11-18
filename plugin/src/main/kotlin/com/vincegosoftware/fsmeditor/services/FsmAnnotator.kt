@@ -11,8 +11,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
 import com.vincegosoftware.fsmeditor.FsmDocuments
 import com.vincegosoftware.fsmeditor.core.Format
-import com.vincegosoftware.fsmeditor.core.Json
-import com.vincegosoftware.fsmeditor.core.JsonSyntaxException
+import com.vincegosoftware.fsmeditor.core.PlainJson
 import com.vincegosoftware.fsmeditor.core.Load
 import com.vincegosoftware.fsmeditor.core.LoadException
 import com.vincegosoftware.fsmeditor.core.MachineFiles
@@ -55,9 +54,9 @@ class FsmAnnotator : ExternalAnnotator<FsmAnnotator.Input, FsmAnnotator.Result>(
             return Result(issues.map { Triple(MachineFiles.oldLineOf(input.text, it.id), severity(it.severity), it.message) }, true)
         }
         try {
-            Json.parse(input.text)
-        } catch (_: JsonSyntaxException) {
-            return null // reported by the JSON support
+            PlainJson.parse(input.text)
+        } catch (_: Exception) {
+            return null // not JSON: reported by the JSON support
         }
         val read = Format.readModel(input.text)
         if (read.failed) return Result(read.problems!!.map { Triple(it.line, HighlightSeverity.ERROR, it.message) }, false)

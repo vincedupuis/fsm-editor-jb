@@ -12,8 +12,8 @@ import com.vincegosoftware.fsmeditor.FsmDocuments
 import java.io.File
 
 /**
- * The JSON Schemas of the Text tab: fsm-cli's for the model file (`.fsm`, bundled in the plugin's `cli/schemas`), and
- * the layout file's (`.fsm.layout`, a resource of the plugin, from the VS Code edition).
+ * The JSON Schemas of the Text tab, bundled in the plugin's `cli/schemas`: fsm-cli's for the model file (`.fsm`), and
+ * fsm-editor-common's for the layout file (`.fsm.layout`).
  */
 class FsmSchemas : JsonSchemaProviderFactory, DumbAware {
     override fun getProviders(project: Project): List<JsonSchemaFileProvider> = listOf(ModelSchema, LayoutSchema)
@@ -22,18 +22,20 @@ class FsmSchemas : JsonSchemaProviderFactory, DumbAware {
         override fun isAvailable(file: VirtualFile) = FsmDocuments.isFsm(file)
         override fun getName() = "FSM state machine (.fsm)"
         override fun getSchemaType() = SchemaType.embeddedSchema
-        override fun getSchemaFile(): VirtualFile? {
-            // The plugin's jar is in <plugin>/lib.
-            val jar = PathManager.getJarPathForClass(FsmSchemas::class.java) ?: return null
-            val schema = File(File(jar).parentFile?.parentFile, "cli/schemas/fsm.schema.json")
-            return LocalFileSystem.getInstance().findFileByIoFile(schema)
-        }
+        override fun getSchemaFile(): VirtualFile? = bundled("fsm.schema.json")
     }
+
 
     private object LayoutSchema : JsonSchemaFileProvider {
         override fun isAvailable(file: VirtualFile) = FsmDocuments.isLayout(file)
         override fun getName() = "FSM state machine layout (.fsm.layout)"
         override fun getSchemaType() = SchemaType.embeddedSchema
-        override fun getSchemaFile(): VirtualFile? = JsonSchemaProviderFactory.getResourceFile(FsmSchemas::class.java, "/schemas/fsm-layout.schema.json")
+        override fun getSchemaFile(): VirtualFile? = bundled("fsm-layout.schema.json")
     }
+}
+
+/** A schema of the plugin's `cli/schemas` (the plugin's jar is in <plugin>/lib). */
+private fun bundled(name: String): VirtualFile? {
+    val jar = PathManager.getJarPathForClass(FsmSchemas::class.java) ?: return null
+    return LocalFileSystem.getInstance().findFileByIoFile(File(File(jar).parentFile?.parentFile, "cli/schemas/$name"))
 }

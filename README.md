@@ -117,12 +117,12 @@ Files of earlier versions (XMI 2.5.1 with UML DI) still open, unchanged, their T
 Requirements: JDK 17 or later to run Gradle (a JDK 21 toolchain is downloaded when missing); [Rust](https://rustup.rs/) to build `fsm` from a clone of fsm-cli, or else archives from the [fsm-cli releases](https://github.com/vincedupuis/fsm-cli/releases).
 
 ```sh
-./gradlew :core:test         # model, file format (against fsm-cli's test cases), validation, editing, diff and merge tests
+./gradlew :core:test         # the client of fsm-editor-common (its interface's cases), editing, extraction and trace tests
 ./gradlew :plugin:test       # the plugin in a headless IDE; paints the editor into plugin/build/screenshots
 ./gradlew :plugin:runIde     # starts IntelliJ IDEA with the plugin: open examples/MediaPlayer.fsm, or Order.fsm (uses Payment.fsm)
-scripts/fetch-cli.sh         # copies the fsm generator of this machine's platform from a clone of fsm-cli (../fsm-cli) into plugin/cli
-                             # (--build: builds it there first with cargo; given a folder of unpacked fsm-cli release archives
-                             # instead, --all takes every platform found there)
+scripts/fetch-common.sh      # copies fsm-editor-common's sidecar of this machine's platform, fsm-cli's templates, the schemas and
+                             # the interface's cases from clones (../fsm-editor-common, ../fsm-cli) into plugin/cli (--build: builds
+                             # it there first with cargo; given a folder of unpacked release archives, every platform found there)
 ./gradlew :plugin:buildPlugin      # plugin/build/distributions/fsm-editor-<version>.zip, with plugin/cli when present
 ./gradlew :plugin:verifyPlugin     # JetBrains Plugin Verifier against 2024.3 (-PverifyIde=<path to an IDE> adds another)
 ```
@@ -131,7 +131,7 @@ Install the ZIP with Settings › Plugins › ⚙ › *Install Plugin from Disk.
 
 ### Layout
 
-- `core/` (Kotlin, no IntelliJ dependency): the model (`Model.kt`), the text grammar (`Expressions.kt`), the file format (`Json.kt`, `Format.kt`, `MachineFiles.kt`), reading and converting files of earlier versions (`Xmi.kt`, `XmlTree.kt`, `Conversion.kt`, `Load.kt`), comparing and merging versions (`Compare.kt`, `Merge.kt`, `Sessions.kt`), the validator (`Validation.kt`), diagram geometry (`Geometry.kt`, `Labels.kt`), every editing operation of the diagram (`DiagramSession.kt`, `Tools.kt`), SVG export, the clipboard format, submachine resolution (`Workspace.kt`) and the Trace Player's logic (`Trace.kt`)
+- `core/` (Kotlin, no IntelliJ dependency): the model (`Model.kt`, its JSON in `ModelJson.kt`), the client of fsm-editor-common's sidecar (`Common.kt`) and what goes through it: the text grammar's checks (`Expressions.kt`), the file format (`Format.kt`, `MachineFiles.kt`), converting files of earlier versions (`Conversion.kt`, `Load.kt`), comparing and merging versions (`Compare.kt`, `Merge.kt`; the panes' logic in `Sessions.kt`), the validator (`Validation.kt`); diagram geometry (`Geometry.kt`, `Labels.kt`), every editing operation of the diagram (`DiagramSession.kt`, `Tools.kt`), SVG export, the clipboard format, submachine resolution (`Workspace.kt`) and the Trace Player's logic (`Trace.kt`)
 - `plugin/`: the IntelliJ Platform plugin
   - `FsmDocuments.kt`: the file types (`.fsm` as JSON, old files as XML), opening files in the diagram or as text, SVG and PNG saving
   - `editor/FsmEditorProvider.kt`, `editor/FsmFileEditor.kt`: the Diagram tab, and the merge of a file with conflicts
@@ -139,9 +139,9 @@ Install the ZIP with Settings › Plugins › ⚙ › *Install Plugin from Disk.
   - `editor/DiagramDiff.kt`: Compare as Diagrams, a diff tool of the IDE's diff view
   - `editor/EditorPanel.kt`, `editor/DiagramCanvas.kt`, `editor/PropertiesPanel.kt`: the Swing diagram editor
   - `services/`: the project's machines (and layout files renamed with their models), validation in the Text tab, the JSON Schemas, Git, the XMI namespaces
-  - `codegen/`: running the `fsm` generator, its dialog and tool window
+  - `codegen/`: code generation through fsm-editor-common, its dialog and tool window
   - `trace/`: the Trace Player tool window and the service following the logs
   - `Actions.kt`, `settings/`: actions and Settings › Tools › FSM Editor
-- `core/src/test/`: tests: fsm-cli's test cases (`plugin/cli/cases`, copied by `scripts/fetch-cli.sh`), the layout file's test files and parity results of the VS Code extension (`resources/fixtures/`)
-- `scripts/fetch-cli.sh`: copies the code generator, the format's schema and test cases into `plugin/cli`
+- `core/src/test/`: tests, which run fsm-editor-common's sidecar (copied by `scripts/fetch-common.sh`) and replay its interface's cases
+- `scripts/fetch-common.sh`: copies fsm-editor-common's sidecar, fsm-cli's templates, the schemas and the interface's cases into `plugin/cli`
 - `docs/`: UML conformance and code generation

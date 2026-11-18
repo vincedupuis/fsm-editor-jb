@@ -58,13 +58,14 @@ intellijPlatform {
     }
 }
 
-// The fsm code generator of fsm-cli with its templates, in plugin/cli/<platform>, and the model file's JSON Schema, in
-// plugin/cli/schemas (copied by scripts/fetch-cli.sh, or unpacked from fsm-cli's release archives by the release
-// workflow; gitignored), ship in the plugin's cli/ folder. fsm-cli's test cases (plugin/cli/cases) are for the tests only.
+// fsm-editor-common's sidecar, in plugin/cli/<platform>, fsm-cli's templates, in plugin/cli/templates, and the files'
+// JSON Schemas, in plugin/cli/schemas (copied by scripts/fetch-common.sh, or unpacked from fsm-editor-common's release
+// archives by the release workflow; gitignored), ship in the plugin's cli/ folder. The interface's cases
+// (plugin/cli/api-cases) are for the tests only.
 val cliDir = rootProject.layout.projectDirectory.dir("plugin/cli")
 tasks.named<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>("prepareSandbox") {
     from(cliDir) {
-        exclude("cases/**")
+        exclude("api-cases/**", "schemas/api.schema.json")
         into(intellijPlatform.projectName.map { "$it/cli" })
     }
 }
@@ -72,5 +73,8 @@ tasks.named<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>("pr
 tasks.test {
     systemProperty("fsm.examples", rootProject.file("examples").absolutePath)
     systemProperty("fsm.cli", cliDir.asFile.absolutePath)
+    // The sidecar of this machine (plugin/cli/<platform>/), when scripts/fetch-common.sh copied it.
+    fileTree(rootProject.file("plugin/cli")).matching { include("*/fsm-editor-common*") }.files.firstOrNull()
+        ?.let { systemProperty("fsm.common", it.absolutePath) }
     systemProperty("fsm.screenshots", layout.buildDirectory.dir("screenshots").get().asFile.absolutePath)
 }

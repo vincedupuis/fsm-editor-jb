@@ -38,14 +38,15 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 /**
- * Generates code for a machine with `fsm write`: asks for a template and a folder, runs it, reports the results.
+ * Generates code for a machine (fsm-cli's generator, run by fsm-editor-common): asks for a template and a folder,
+ * generates, reports the results.
  */
 object CodeGeneration {
     private const val OUT_KEY = "fsmEditor.codegen.out."
 
-    /** Templates offered for a machine: fsm's own, then the *.jinja files of the project. */
-    private fun templateChoices(project: Project, cli: File): List<TemplateChoice> {
-        val choices = FsmCli.bundledTemplates(cli).map { TemplateChoice(it.path, it.nameWithoutExtension, "bundled template") }.toMutableList()
+    /** Templates offered for a machine: the bundled ones, then the *.jinja files of the project. */
+    private fun templateChoices(project: Project): List<TemplateChoice> {
+        val choices = CodeGenerator.bundledTemplates().map { TemplateChoice(it.path, it.nameWithoutExtension, "bundled template") }.toMutableList()
         val workspace = FsmWorkspace.getInstance(project)
         val found = ApplicationManager.getApplication().runReadAction(Computable {
             val output = ArrayList<VirtualFile>()
@@ -70,20 +71,10 @@ object CodeGeneration {
             return
         }
         val settings = FsmSettings.getInstance().state
-        val cli = FsmCli.locate(settings.cliPath)
-        if (cli == null) {
-            Messages.showErrorDialog(
-                project,
-                if (settings.cliPath.isBlank()) "The fsm code generator was not found. Set its path in Settings › Tools › FSM Editor, or put fsm on the PATH."
-                else "The fsm code generator '${settings.cliPath}' configured in Settings › Tools › FSM Editor does not exist.",
-                "Generate Code",
-            )
-            return
-        }
         val properties = PropertiesComponent.getInstance(project)
         val outKey = OUT_KEY + source.path
         val lastOut = properties.getValue(outKey) ?: source.parent.path
-        val dialog = GenerateCodeDialog(project, source.nameWithoutExtension, templateChoices(project, cli), settings.lastTemplate, lastOut)
+        val dialog = GenerateCodeDialog(project, source.nameWithoutExtension, templateChoices(project), settings.lastTemplate, lastOut)
         if (!dialog.showAndGet()) return
         val (template, output) = dialog.result
         settings.lastTemplate = template
@@ -93,18 +84,21 @@ object CodeGeneration {
             val documents = FileDocumentManager.getInstance()
             documents.unsavedDocuments.filter { FsmDocuments.isFsm(documents.getFile(it)) }.forEach { documents.saveDocument(it) }
         }
-        val args = FsmCli.writeArgs(source.path, template, output)
+        // A relative output folder is relative to the machine's folder.
+        val outDir = File(output).let { if (it.isAbsolute) it else File(source.parent.path, output) }.normalize()
+        val workspace = FsmWorkspace.getInstance(project)
         val console = CodeGenOutput.getInstance(project)
-        console.print("${LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))} ${FsmCli.commandLine(cli, args)}\n", ConsoleViewContentType.SYSTEM_OUTPUT)
+        val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        console.print("$time ${workspace.display(source.path)} with ${File(template).name} into ${workspace.display(outDir.path.replace('\\', '/'))}\n", ConsoleViewContentType.SYSTEM_OUTPUT)
         WindowManager.getInstance().getStatusBar(project)?.info = "Generating code for ${source.name}..."
 
         object : Task.Backgroundable(project, "Generating code for ${source.name}", true) {
-            private var result: CliResult? = null
+            private var result: GenerateResult? = null
             private var failure: Exception? = null
 
             override fun run(indicator: ProgressIndicator) {
                 try {
-                    result = FsmCli.run(cli, args, File(source.parent.path), indicator)
+                    result = CodeGenerator.generate(File(source.path), File(template), outDir)
                 } catch (e: Exception) {
                     failure = e
                 }
@@ -115,32 +109,23 @@ object CodeGeneration {
                 if (r == null) {
                     val message = failure?.message ?: "unknown error"
                     console.print("  $message\n", ConsoleViewContentType.ERROR_OUTPUT)
-                    Messages.showErrorDialog(project, "Could not run ${cli.path}: $message", "Code Generation Failed")
+                    Messages.showErrorDialog(project, "Code generation failed: $message", "Code Generation Failed")
                     return
                 }
-                // A relative output folder is relative to the generator's working directory, the machine's folder.
-                report(project, console, r, File(output).let { if (it.isAbsolute) it else File(source.parent.path, output) }.normalize().path, cli)
+                report(project, console, r, outDir.path)
             }
         }.queue()
     }
 
-    private fun report(project: Project, console: CodeGenOutput, r: CliResult, output: String, cli: File) {
-        if (r.cancelled) {
-            console.print("  Cancelled.\n", ConsoleViewContentType.SYSTEM_OUTPUT)
-            WindowManager.getInstance().getStatusBar(project)?.info = "Code generation cancelled."
-            return
+    private fun report(project: Project, console: CodeGenOutput, r: GenerateResult, output: String) {
+        val workspace = FsmWorkspace.getInstance(project)
+        for (issue in r.issues) {
+            console.print("  ", ConsoleViewContentType.NORMAL_OUTPUT)
+            console.link("${workspace.display(issue.file.replace('\\', '/'))}:${issue.line}: ${issue.severity.key}: ${issue.message}", issue)
+            console.print("\n", ConsoleViewContentType.NORMAL_OUTPUT)
         }
-        for (line in r.output) console.print("  $line\n", ConsoleViewContentType.NORMAL_OUTPUT)
-        for (line in r.errors) {
-            val issue = r.issues.firstOrNull { line.contains(":${it.line}: ${it.severity.key}: ${it.message}") }
-            if (issue != null) {
-                console.print("  ", ConsoleViewContentType.NORMAL_OUTPUT)
-                console.link(line, issue)
-                console.print("\n", ConsoleViewContentType.NORMAL_OUTPUT)
-            } else {
-                console.print("  $line\n", ConsoleViewContentType.ERROR_OUTPUT)
-            }
-        }
+        for (f in r.written) console.print("  wrote ${workspace.display(f.replace('\\', '/'))}\n", ConsoleViewContentType.NORMAL_OUTPUT)
+        r.error?.let { console.print("  $it\n", ConsoleViewContentType.ERROR_OUTPUT) }
         // Show the new files in the project view.
         r.written.forEach { LocalFileSystem.getInstance().refreshAndFindFileByPath(it.replace('\\', '/')) }
         LocalFileSystem.getInstance().findFileByPath(output.replace('\\', '/'))?.refresh(true, true)
@@ -159,10 +144,9 @@ object CodeGeneration {
         }
         WindowManager.getInstance().getStatusBar(project)?.info = "Code generation failed."
         console.show()
-        // fsm's own message says why, also for bad usage (exit 2), such as a template it refuses.
-        val reason = if (r.issues.any { it.severity == Severity.Error }) "The state machine has errors (see FSM Code Generation)."
-        else r.message ?: if (r.exitCode == 2) "The generator was called with bad arguments."
-        else r.errors.lastOrNull() ?: "${cli.nameWithoutExtension} exited with code ${r.exitCode}."
+        // The generator's own message says why, also for a request it refuses, such as a template.
+        val reason = r.error ?: if (r.issues.any { it.severity == Severity.Error }) "The state machine has errors (see FSM Code Generation)."
+        else "The generator stopped with exit code ${r.exitCode}."
         Messages.showErrorDialog(project, "$reason Details are in the FSM Code Generation tool window.", "Code Generation Failed")
     }
 }
@@ -185,7 +169,7 @@ class CodeGenOutput(private val project: Project) : Disposable {
     fun print(text: String, type: ConsoleViewContentType) = view().print(text, type)
 
     /** A problem line that opens the file at its line (a state machine opens in the diagram). */
-    fun link(text: String, issue: CliIssue) {
+    fun link(text: String, issue: GenerateIssue) {
         val file = LocalFileSystem.getInstance().findFileByPath(issue.file.replace('\\', '/'))
         val info: HyperlinkInfo? = when {
             file == null -> null

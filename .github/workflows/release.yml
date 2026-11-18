@@ -1,4 +1,4 @@
-# On a version tag (v0.3.0), builds the plugin with the `fsm` code generator (fsm-cli) of
+# On a version tag (v0.3.0), builds the plugin with fsm-editor-common's sidecar of
 # every platform, attaches it to the GitHub Release of that tag, and publishes it
 # to the JetBrains Marketplace when the JETBRAINS_MARKETPLACE_TOKEN secret is set
 # (a token from plugins.jetbrains.com > My Tokens).
@@ -9,9 +9,10 @@ on:
     tags: ['v*']
 
 env:
-  # Release of fsm-cli (github.com/vincedupuis/fsm-cli) whose `fsm` code generator (fsm-<version>-<platform> archives)
-  # and fsm-schemas-<version>.tar.gz the plugin bundles, and whose fsm-cases-<version>.tar.gz the tests use.
-  FSM_CLI_VERSION: 0.7.0
+  # Release of fsm-editor-common (github.com/vincedupuis/fsm-editor-common) whose sidecar (the
+  # fsm-editor-common-<version>-<platform> archives), templates and schemas archives the plugin bundles, and whose
+  # api-cases archive the tests replay.
+  FSM_COMMON_VERSION: 0.1.0
 
 jobs:
   release:
@@ -42,29 +43,21 @@ jobs:
         with:
           cache-provider: basic
 
-      - name: Fetch the fsm code generator, the format's schemas and its test cases
+      - name: Fetch fsm-editor-common, fsm-cli's templates, the schemas and the interface's cases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "v$FSM_CLI_VERSION" -R vincedupuis/fsm-cli -p "fsm-$FSM_CLI_VERSION-*" -D "$RUNNER_TEMP/fsm"
-          for archive in "$RUNNER_TEMP"/fsm/*; do
+          v=$FSM_COMMON_VERSION
+          gh release download "v$v" -R vincedupuis/fsm-editor-common -p "fsm-editor-common-*" -D "$RUNNER_TEMP/common"
+          for archive in "$RUNNER_TEMP"/common/*; do
             case "$archive" in
-              *.zip) unzip -q "$archive" -d "$RUNNER_TEMP/fsm" ;;
-              *.tar.gz) tar xzf "$archive" -C "$RUNNER_TEMP/fsm" ;;
+              *.zip) unzip -q "$archive" -d "$RUNNER_TEMP/common" ;;
+              *.tar.gz) tar xzf "$archive" -C "$RUNNER_TEMP/common" ;;
             esac
           done
-          for dir in "$RUNNER_TEMP"/fsm/fsm-$FSM_CLI_VERSION-*/; do
-            platform=$(basename "$dir" | sed "s/^fsm-$FSM_CLI_VERSION-//")
-            mkdir -p plugin/cli
-            cp -R "$dir" "plugin/cli/$platform"
-          done
-          # The model file's JSON Schema (bundled: the Text tab checks .fsm files with it) and the format's test cases
-          # (for the core tests only, not bundled).
-          for part in schemas cases; do
-            gh release download "v$FSM_CLI_VERSION" -R vincedupuis/fsm-cli -p "fsm-$part-$FSM_CLI_VERSION.tar.gz" -D "$RUNNER_TEMP"
-            tar xzf "$RUNNER_TEMP/fsm-$part-$FSM_CLI_VERSION.tar.gz" -C plugin/cli
-          done
-          ls plugin/cli
+          # The sidecar per platform, then the templates, the schemas (bundled) and the interface's cases (tests only).
+          scripts/fetch-common.sh "$RUNNER_TEMP/common"
+          ls -R plugin/cli
 
       - name: Test
         run: ./gradlew :core:test :plugin:test

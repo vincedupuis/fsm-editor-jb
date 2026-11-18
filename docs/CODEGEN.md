@@ -1,8 +1,8 @@
 # Code Generation
 
-FSM Editor for JetBrains IDEs generates source code with [Jinja](https://jinja.palletsprojects.com/) templates, running **`fsm`**, the same command-line generator as FSM Editor for VS Code and for Visual Studio. `fsm` is [fsm-cli](https://github.com/vincedupuis/fsm-cli), in Rust, with templates rendered by [MiniJinja](https://github.com/mitsuhiko/minijinja). The plugin doesn't reimplement code generation: it runs `fsm write`, which it bundles, and shows the results in the IDE. The same templates therefore produce the same code from IntelliJ IDEA, VS Code, Visual Studio, a terminal or a CI build.
+FSM Editor for JetBrains IDEs generates source code with [Jinja](https://jinja.palletsprojects.com/) templates, with the code generator of **`fsm`**, the command-line tool of [fsm-cli](https://github.com/vincedupuis/fsm-cli) (Rust, templates rendered by [MiniJinja](https://github.com/mitsuhiko/minijinja)): the same generator as FSM Editor for VS Code and for Visual Studio. The plugin doesn't reimplement code generation: it runs it through [fsm-editor-common](https://github.com/vincedupuis/fsm-editor-common), which it bundles, and shows the results in the IDE. The same templates therefore produce the same code from IntelliJ IDEA, VS Code, Visual Studio, a terminal (`fsm write`) or a CI build.
 
-Handlebars templates (`.hbs`), which earlier versions used, are no longer supported: `fsm` refuses them and says so. [Coming from the Handlebars templates](https://github.com/vincedupuis/fsm-cli#coming-from-the-handlebars-templates) shows how to convert one to Jinja.
+Handlebars templates (`.hbs`), which earlier versions used, are no longer supported: the generator refuses them and says so. [Coming from the Handlebars templates](https://github.com/vincedupuis/fsm-cli#coming-from-the-handlebars-templates) shows how to convert one to Jinja.
 
 - [From the IDE](#from-the-ide)
 - [From the command line and builds](#from-the-command-line-and-builds)
@@ -46,15 +46,9 @@ val generateStateMachines by tasks.registering(Exec::class) {
 }
 ```
 
-## Which fsm is used
+## Which generator is used
 
-In this order:
-
-1. The path set in Settings › Tools › FSM Editor › *fsm executable*, when set.
-2. The executable bundled with the plugin (`cli/<platform>/fsm`, or `fsm.exe` on Windows), with its templates in `cli/<platform>/templates`. `<platform>` is `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64` or `windows-x64`.
-3. An `fsm` (`fsm.exe` on Windows) on the `PATH`.
-
-Set the option to use a newer generator than the bundled one, your own build, or when the plugin was built without the generator for your platform.
+The one bundled with the plugin: fsm-editor-common's sidecar (`cli/<platform>/fsm-editor-common`, `.exe` on Windows; `<platform>` is `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64` or `windows-x64`), with fsm-cli's templates in `cli/templates`: the generator of the fsm-cli version that fsm-editor-common release was built with. `fsm write` in a terminal or a build uses the `fsm` you install from [fsm-cli's releases](https://github.com/vincedupuis/fsm-cli/releases).
 
 ## Templates and the code model
 

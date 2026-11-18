@@ -47,10 +47,8 @@ object MachineFiles {
      * something now resolved. Throws [FormatLossException] when the format can't hold it.
      */
     fun write(model: FsmModel): MachineState {
-        Format.assignNames(model)
         val w = Format.writeMachine(model)
         if (w.lost.isNotEmpty()) throw FormatLossException(w.lost)
-        Format.resolveReferences(model, w)
         return MachineState(w.model, w.layout, model, null, w.lines)
     }
 

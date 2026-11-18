@@ -5,10 +5,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
-import com.intellij.openapi.fileChooser.FileChooser
-import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.options.Configurable
-import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -21,8 +18,6 @@ import javax.swing.JComponent
 @State(name = "FsmEditorSettings", storages = [Storage("fsmEditor.xml")])
 class FsmSettings : PersistentStateComponent<FsmSettings.Options> {
     class Options {
-        /** Path of the fsm code generator; empty to use the bundled one, or else one on the PATH. */
-        var cliPath: String = ""
         /** The generator reads the files on disk: save open state machines first. */
         var saveBeforeGenerating: Boolean = true
         /** Formats of the logs the Trace Player reads, besides its built-in format: a JSON array (see [com.vincegosoftware.fsmeditor.core.TraceFormats]). */
@@ -50,29 +45,17 @@ class FsmSettings : PersistentStateComponent<FsmSettings.Options> {
 }
 
 class FsmConfigurable : Configurable {
-    private var cliPath: TextFieldWithBrowseButton? = null
     private var saveFirst: JBCheckBox? = null
     private var traceFormats: JBTextArea? = null
 
     override fun getDisplayName() = "FSM Editor"
 
     override fun createComponent(): JComponent {
-        val path = TextFieldWithBrowseButton()
-        path.addActionListener {
-            FileChooser.chooseFile(FileChooserDescriptor(true, false, false, false, false, false), null, null) { path.text = it.path }
-        }
         val save = JBCheckBox("Save .fsm documents before generating code")
         val formats = JBTextArea(8, 60).apply { font = com.intellij.util.ui.JBFont.create(java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12)) }
-        cliPath = path
         saveFirst = save
         traceFormats = formats
         return FormBuilder.createFormBuilder()
-            .addLabeledComponent("fsm executable:", path)
-            .addComponentToRightColumn(
-                com.intellij.ui.components.JBLabel(
-                    "<html>Path of the fsm code generator (from github.com/vincedupuis/fsm-cli). Leave empty to use the one bundled with the plugin, or else an fsm found on the PATH.</html>",
-                ).apply { foreground = UIUtil.getContextHelpForeground() },
-            )
             .addComponent(save)
             .addComponentToRightColumn(
                 com.intellij.ui.components.JBLabel("<html>The generator reads the files on disk: unsaved state machines are saved first.</html>")
@@ -94,13 +77,12 @@ class FsmConfigurable : Configurable {
     override fun isModified(): Boolean {
         val o = FsmSettings.getInstance().state
         // As stored by apply: trimmed.
-        return (cliPath?.text?.trim() ?: "") != o.cliPath || saveFirst?.isSelected != o.saveBeforeGenerating ||
+        return saveFirst?.isSelected != o.saveBeforeGenerating ||
             traceFormats?.text != o.traceFormats
     }
 
     override fun apply() {
         val o = FsmSettings.getInstance().state
-        o.cliPath = cliPath?.text?.trim() ?: ""
         o.saveBeforeGenerating = saveFirst?.isSelected ?: true
         val formatsChanged = o.traceFormats != (traceFormats?.text ?: "")
         o.traceFormats = traceFormats?.text ?: ""
@@ -113,13 +95,11 @@ class FsmConfigurable : Configurable {
 
     override fun reset() {
         val o = FsmSettings.getInstance().state
-        cliPath?.text = o.cliPath
         saveFirst?.isSelected = o.saveBeforeGenerating
         traceFormats?.text = o.traceFormats
     }
 
     override fun disposeUIResources() {
-        cliPath = null
         saveFirst = null
         traceFormats = null
     }
