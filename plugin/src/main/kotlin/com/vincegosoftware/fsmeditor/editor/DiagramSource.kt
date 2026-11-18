@@ -4,6 +4,7 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.DocumentReference
@@ -229,7 +230,10 @@ class FileSource(private val project: Project, val file: VirtualFile, parent: Di
 
     fun layoutFile(): VirtualFile? = file.parent?.findChild(file.name + ".layout")?.takeIf { it.isValid && !it.isDirectory }
 
-    private fun layoutDocument(): Document? = layoutFile()?.let { FileDocumentManager.getInstance().getDocument(it) }
+    private fun layoutDocument(): Document? = layoutFile()?.let { document(it) }
+
+    /** Loading a document reads the file: a read action (an edit runs on the EDT outside one). */
+    private fun document(f: VirtualFile): Document? = ReadAction.compute<Document?, RuntimeException> { FileDocumentManager.getInstance().getDocument(f) }
 
     fun documents(): List<Document> = listOfNotNull(modelDocument, layoutDocument())
 
@@ -330,7 +334,7 @@ class FileSource(private val project: Project, val file: VirtualFile, parent: Di
             try {
                 val folder = file.parent ?: return "The layout file can't be created next to ${file.name}."
                 val created = WriteAction.compute<VirtualFile, IOException> { folder.findChild(file.name + ".layout") ?: folder.createChildData(this, file.name + ".layout") }
-                layoutDoc = FileDocumentManager.getInstance().getDocument(created)
+                layoutDoc = document(created)
             } catch (e: IOException) {
                 return "${file.name}.layout could not be created: ${e.message}"
             }
@@ -354,7 +358,7 @@ class FileSource(private val project: Project, val file: VirtualFile, parent: Di
         if (layoutDoc == null && layoutText != null) {
             val folder = file.parent ?: return
             val created = WriteAction.compute<VirtualFile, IOException> { folder.findChild(file.name + ".layout") ?: folder.createChildData(this, file.name + ".layout") }
-            layoutDoc = FileDocumentManager.getInstance().getDocument(created)
+            layoutDoc = document(created)
         }
         states[s.modelText to layoutText] = s
         WriteCommandAction.writeCommandAction(project).withName("Complete Merge").run<RuntimeException> {
