@@ -1101,6 +1101,8 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         layers.revalidate()
         layers.doLayout()
         layers.repaint()
+        // Long enough to read: 60 ms a character, from 2.6 s to 8 s.
+        toastTimer.initialDelay = (message.length * 60).coerceIn(2600, 8000)
         toastTimer.restart()
     }
 
