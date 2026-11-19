@@ -81,7 +81,6 @@ import javax.swing.JTextArea
 import javax.swing.JTextField
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
-import javax.swing.Timer
 import javax.swing.TransferHandler
 import javax.swing.text.JTextComponent
 import kotlin.math.max
@@ -148,7 +147,6 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     private val toolbox = WidthTrackingPanel()
     private val status = JPanel(BorderLayout())
     private val toast = Toast()
-    private val toastTimer = Timer(2600) { toast.isVisible = false }.apply { isRepeats = false }
     private val parseError = JPanel()
     private val toolRows = LinkedHashMap<String, ToolRow>()
     private val title = JBLabel()
@@ -1096,14 +1094,12 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     }
 
     fun toast(message: String) {
-        toast.text = message
+        // Stays until its × is clicked or the next toast replaces it.
+        toast.text.text = message
         toast.isVisible = true
         layers.revalidate()
         layers.doLayout()
         layers.repaint()
-        // Long enough to read: 60 ms a character, from 2.6 s to 8 s.
-        toastTimer.initialDelay = (message.length * 60).coerceIn(2600, 8000)
-        toastTimer.restart()
     }
 
     private fun showParseError(error: String) {
@@ -1177,12 +1173,29 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         override fun getScrollableTracksViewportHeight() = false
     }
 
-    /** A short message over the top of the canvas. */
-    private class Toast : JBLabel() {
+    /**
+     * A short message over the top of the canvas, with a × that closes it.
+     * Only the × listens to the mouse: Swing gives clicks on the rest to the canvas under it.
+     */
+    private inner class Toast : JPanel(BorderLayout(JBUI.scale(8), 0)) {
+        val text = JBLabel().apply { foreground = Color.WHITE }
+
         init {
-            foreground = Color.WHITE
             border = JBUI.Borders.empty(6, 12)
             isOpaque = false
+            add(text, BorderLayout.CENTER)
+            add(JBLabel("×").apply {
+                foreground = Color.WHITE
+                font = font.deriveFont(JBUI.scale(14).toFloat())
+                toolTipText = "Close"
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) {
+                        this@Toast.isVisible = false
+                        layers.repaint()
+                    }
+                })
+            }, BorderLayout.EAST)
         }
 
         override fun paintComponent(g: Graphics) {
