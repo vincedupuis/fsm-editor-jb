@@ -93,17 +93,15 @@ object MachineFiles {
         return if (at < 0) 1 else text.substring(0, at).count { it == '\n' } + 1
     }
 
-    /** The message saying what converting old files did: the files converted, those skipped, every rename and loss. */
+    /** The message saying which files converting old files changed from XMI to JSON, and which it skipped. */
     fun conversionMessage(converted: List<Pair<String, Converted>>, skipped: List<String>): String {
-        val lines = ArrayList<String>()
-        for ((file, r) in converted) {
-            for (x in r.renames) lines.add("$file: $x.")
-            if (r.generated > 0) lines.add("$file: ${r.generated} unnamed element${if (r.generated == 1) "" else "s"} got a generated name (ending with *, not shown on the diagram).")
-            for (l in r.losses) lines.add("$file: left out $l.")
+        var message = if (converted.size == 1) {
+            val file = converted[0].first
+            "$file is no longer saved in XMI but in JSON, in two separate files: $file and $file.layout."
+        } else {
+            "${converted.joinToString(", ") { it.first }} are no longer saved in XMI but in JSON, each in two separate files: .fsm and .fsm.layout."
         }
-        var message = "Saved in the new format (the model in .fsm, the layout in .fsm.layout): ${converted.joinToString(", ") { it.first }}."
-        if (skipped.isNotEmpty()) message += " Not converted, as they have unsaved changes or can't be read: ${skipped.joinToString(", ")}."
-        if (lines.isNotEmpty()) message += " " + lines.joinToString(" ")
+        if (skipped.isNotEmpty()) message += " Still in XMI, as they have unsaved changes or can't be read: ${skipped.joinToString(", ")}."
         return message
     }
 }
