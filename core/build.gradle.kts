@@ -32,6 +32,9 @@ tasks.test {
     // plugin/cli by scripts/fetch-common.sh).
     systemProperty("fsm.examples", rootProject.file("examples").absolutePath)
     systemProperty("fsm.cli", rootProject.file("plugin/cli").absolutePath)
+    // The VS Code edition's geometry fixtures and their reference SVGs (its test/unit/fixtures/geometry).
+    systemProperty("fsm.geometry", file("src/test/geometry").absolutePath)
+    inputs.dir("src/test/geometry")
     // The sidecar of this machine (plugin/cli/<platform>/), when scripts/fetch-common.sh copied it.
     fileTree(rootProject.file("plugin/cli")).matching { include("*/fsm-editor-common*") }.files.firstOrNull()
         ?.let { systemProperty("fsm.common", it.absolutePath) }
