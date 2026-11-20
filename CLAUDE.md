@@ -5,7 +5,7 @@ IntelliJ Platform plugin (2024.3+, all JetBrains IDEs with XML and JSON support)
 ## Commands
 
 ```sh
-./gradlew :core:test          # core tests: the client of fsm-editor-common (its interface's cases, plugin/cli/api-cases), editing, extraction, traces, and GeometryTest: SvgExport against core/src/test/geometry, a copy of the VS Code edition's reference SVGs (its test/unit/fixtures/geometry)
+./gradlew :core:test          # core tests: the client of fsm-editor-common (its interface's cases, plugin/cli/api-cases), editing, extraction, traces, GeometryTest: SvgExport against core/src/test/geometry, a copy of the VS Code edition's reference SVGs (its test/unit/fixtures/geometry), ClipboardTest: the clipboard JSON of core/src/test/clipboard (a copy of its test/unit/fixtures/clipboard), and ListingTest: the Marketplace listing (name and id in plugin.xml and the build script, icon, links)
 ./gradlew :plugin:test        # headless IDE tests; also paints the editor into plugin/build/screenshots/*.png
 ./gradlew :plugin:runIde      # sandbox IDE with the plugin; try examples/MediaPlayer.fsm and examples/Order.fsm (uses Payment.fsm)
 ./gradlew :plugin:buildPlugin :plugin:verifyPlugin [-PverifyIde=<local IDE path>]

@@ -6,7 +6,7 @@ Handlebars templates (`.hbs`), which earlier versions used, are no longer suppor
 
 - [From the IDE](#from-the-ide)
 - [From the command line and builds](#from-the-command-line-and-builds)
-- [Which fsm is used](#which-fsm-is-used)
+- [Which generator is used](#which-generator-is-used)
 - [Templates and the code model](#templates-and-the-code-model)
 
 ## From the IDE

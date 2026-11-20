@@ -35,6 +35,13 @@ tasks.test {
     // The VS Code edition's geometry fixtures and their reference SVGs (its test/unit/fixtures/geometry).
     systemProperty("fsm.geometry", file("src/test/geometry").absolutePath)
     inputs.dir("src/test/geometry")
+    // The VS Code edition's clipboard fixtures (its test/unit/fixtures/clipboard).
+    systemProperty("fsm.clipboard", file("src/test/clipboard").absolutePath)
+    inputs.dir("src/test/clipboard")
+    // The listing (ListingTest): the plugin's descriptor and build script, the README and the docs it links to.
+    systemProperty("fsm.root", rootProject.projectDir.absolutePath)
+    inputs.files(rootProject.files("plugin/src/main/resources/META-INF/plugin.xml", "plugin/build.gradle.kts", "README.md"))
+    inputs.dir(rootProject.file("docs"))
     // The sidecar of this machine (plugin/cli/<platform>/), when scripts/fetch-common.sh copied it.
     fileTree(rootProject.file("plugin/cli")).matching { include("*/fsm-editor-common*") }.files.firstOrNull()
         ?.let { systemProperty("fsm.common", it.absolutePath) }
