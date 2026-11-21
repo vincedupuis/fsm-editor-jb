@@ -88,6 +88,10 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>(
 }
 
 tasks.test {
+    // The assertion's message and the stack, in the build's output (CI shows only that).
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
     systemProperty("fsm.examples", rootProject.file("examples").absolutePath)
     systemProperty("fsm.cli", cliDir.asFile.absolutePath)
     // The sidecar of this machine (plugin/cli/<platform>/, as Common.platform names it), when scripts/fetch-common.sh

@@ -27,6 +27,10 @@ kotlin {
 }
 
 tasks.test {
+    // The assertion's message and the stack, in the build's output (CI shows only that).
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
     useJUnitPlatform()
     // The tests read the shared examples, and run fsm-editor-common's sidecar and its interface's cases (copied into
     // plugin/cli by scripts/fetch-common.sh).

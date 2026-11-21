@@ -25,6 +25,13 @@ import java.io.File
  * old files, the diagram diff and merge.
  */
 class FsmEditorTest : BasePlatformTestCase() {
+    override fun setUp() {
+        super.setUp()
+        // The repo's files (the examples, the plugin's cli/ in the sandbox): outside the roots a test may read by
+        // default, on Windows at least.
+        com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess.allowRootAccess(testRootDisposable, File("..").canonicalPath)
+    }
+
     private val examples = File(System.getProperty("fsm.examples") ?: "../examples")
     /** Old files (XMI) of the examples. */
     private val old = File(examples.parentFile, "plugin/src/test/resources/old")

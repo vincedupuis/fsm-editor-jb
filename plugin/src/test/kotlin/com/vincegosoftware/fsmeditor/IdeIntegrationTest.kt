@@ -30,6 +30,13 @@ import java.nio.file.Files
  * and their menus, and the versions Compare as Diagrams gets from Git.
  */
 class IdeIntegrationTest : BasePlatformTestCase() {
+    override fun setUp() {
+        super.setUp()
+        // The repo's files (the examples, the plugin's cli/ in the sandbox): outside the roots a test may read by
+        // default, on Windows at least.
+        com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess.allowRootAccess(testRootDisposable, File("..").canonicalPath)
+    }
+
     private val examples = File(System.getProperty("fsm.examples") ?: "../examples")
 
     private fun waitFor(what: String, condition: () -> Boolean) {
