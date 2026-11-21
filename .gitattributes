@@ -1,0 +1,9 @@
+# The files the plugin writes have LF line ends: the examples and the test fixtures are compared with them, also
+# on Windows, where git would check them out with CRLF.
+*.fsm text eol=lf
+*.fsm.layout text eol=lf
+*.log text eol=lf
+core/src/test/geometry/** text eol=lf
+core/src/test/clipboard/** text eol=lf
+core/src/test/editing/** text eol=lf
+plugin/src/test/resources/** text eol=lf
