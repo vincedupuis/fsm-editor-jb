@@ -405,11 +405,11 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             shapeWidth = 2.4
             fill = th.accent
         }
-        if (issue == IssueLevel.Warning) stroke = th.warning
+        if (issue == IssueLevel.Warning) stroke = th.mark(th.warning)
         if (issue == IssueLevel.Error) {
-            stroke = th.error
+            stroke = th.mark(th.error)
             shapeWidth = 2.0
-            fill = th.error
+            fill = th.mark(th.error)
         }
         // The Trace Player: active state, or pseudostate on the way of the taken transitions.
         val trace = trace
@@ -417,7 +417,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         if (trace != null) {
             val takenIn = trace.taken[v.id]
             if (activeIn != null || takenIn != null) {
-                stroke = traceColor((activeIn ?: takenIn)!![0], activeIn != null)
+                stroke = th.mark(traceColor((activeIn ?: takenIn)!![0], activeIn != null))
                 fill = stroke
                 shapeWidth = if (activeIn != null) 3.0 else 2.4
             }
@@ -605,7 +605,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         if (activeIn != null && activeIn.size > 1) {
             for ((i, c) in activeIn.withIndex()) {
                 val dot = Ellipse2D.Double(x + w - 6 - (activeIn.size - 1 - i) * 11 - 4, y - 7 - 4, 8.0, 8.0)
-                g.color = traceColor(c)
+                g.color = th.mark(traceColor(c))
                 g.fill(dot)
                 g.color = th.background
                 g.stroke = th.stroke(1.0)
@@ -638,8 +638,8 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val pts = Geo.route(ix, t) ?: return
         val selected = !exporting && t.id in s.selection
         var color = when (issueOf(t.id)) {
-            IssueLevel.Error -> th.error
-            IssueLevel.Warning -> th.warning
+            IssueLevel.Error -> th.mark(th.error)
+            IssueLevel.Warning -> th.mark(th.warning)
             IssueLevel.None -> if (selected) th.accent else Theme.colorOf(t.color) ?: th.line
         }
         var width = if (selected) 2.0 else 1.3
@@ -654,7 +654,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val trace = trace
         val takenColor = trace?.taken?.get(t.id)?.let { traceColor(it[0], false) }
         if (takenColor != null) {
-            color = takenColor
+            color = th.mark(takenColor)
             width = 2.6
         }
         val line = Path2D.Double()
@@ -674,7 +674,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             g.stroke = th.stroke(1.4)
             g.color = th.background
             g.fill(java.awt.geom.Ellipse2D.Double(b.x - 6, b.y - 6, 12.0, 12.0))
-            g.color = th.error
+            g.color = th.mark(th.error)
             g.draw(java.awt.geom.Ellipse2D.Double(b.x - 6, b.y - 6, 12.0, 12.0))
             g.draw(Line2D.Double(b.x - 3, b.y - 3, b.x + 3, b.y + 3))
             g.draw(Line2D.Double(b.x + 3, b.y - 3, b.x - 3, b.y + 3))
@@ -692,7 +692,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             val lp = Geo.labelPos(t, pts)
             var box: Rectangle2D? = null
             for ((i, line) in lines.withIndex()) {
-                val text = Theme.colorOf(ElementColors.item(t.color, t.itemColors, line.first)) ?: takenColor ?: if (selected) th.accent else th.foreground
+                val text = Theme.colorOf(ElementColors.item(t.color, t.itemColors, line.first)) ?: takenColor?.let { th.textOf(it) } ?: if (selected) th.accent else th.foreground
                 val b = drawText(g, lp.x, Geo.labelLineY(lp, i, lines.size), line.second, 11.0, text, lp.anchor, halo = th.background) ?: continue
                 box = box?.createUnion(b) ?: b
             }

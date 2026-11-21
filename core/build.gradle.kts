@@ -38,6 +38,9 @@ tasks.test {
     // The VS Code edition's clipboard fixtures (its test/unit/fixtures/clipboard).
     systemProperty("fsm.clipboard", file("src/test/clipboard").absolutePath)
     inputs.dir("src/test/clipboard")
+    // The VS Code edition's editing fixtures (its test/unit/fixtures/editing).
+    systemProperty("fsm.editing", file("src/test/editing").absolutePath)
+    inputs.dir("src/test/editing")
     // The listing (ListingTest): the plugin's descriptor and build script, the README and the docs it links to.
     systemProperty("fsm.root", rootProject.projectDir.absolutePath)
     inputs.files(rootProject.files("plugin/src/main/resources/META-INF/plugin.xml", "plugin/build.gradle.kts", "README.md"))

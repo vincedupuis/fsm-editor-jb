@@ -13,7 +13,17 @@ dependencies {
     testImplementation(kotlin("test-junit"))
     testImplementation("junit:junit:4.13.2")
     intellijPlatform {
-        intellijIdeaCommunity(providers.gradleProperty("platformVersion"))
+        // The IDE to compile and test against: platformVersion (the oldest supported), or -PplatformVersion=<newer>,
+        // as CI tests the newest. IntelliJ IDEA Community isn't published since 2025.3: IntelliJ IDEA from then on.
+        val platform = providers.gradleProperty("platformVersion").get()
+        if (platform.substringBefore('.').toInt() * 10 + platform.substringAfter('.').substringBefore('.').toInt() >= 20253) {
+            intellijIdea(platform)
+            // XML support (old files, XMI) and VCS (the merge of a file with conflicts): plugins of their own there too.
+            bundledPlugin("com.intellij.xml")
+            bundledPlugin("com.intellij.platform.vcs")
+        } else {
+            intellijIdeaCommunity(platform)
+        }
         // JSON support (the Text tab of .fsm and .fsm.layout files, their schemas): a plugin of its own since 2024.3.
         bundledPlugin("com.intellij.modules.json")
         testFramework(TestFrameworkType.Platform)
@@ -54,6 +64,12 @@ intellijPlatform {
             // The oldest supported IDE, and optionally a local one: -PverifyIde=/path/to/IntelliJ IDEA.app
             create(IntelliJPlatformType.IntellijIdeaCommunity, providers.gradleProperty("platformVersion"))
             providers.gradleProperty("verifyIde").orNull?.let { local(file(it)) }
+            // -PverifyAll (CI): the IDEs of verifyIdes too.
+            if (providers.gradleProperty("verifyAll").isPresent) {
+                for (ide in providers.gradleProperty("verifyIdes").get().split(' ').filter { it.isNotBlank() }) {
+                    create(IntelliJPlatformType.valueOf(ide.substringBefore(':')), ide.substringAfter(':'))
+                }
+            }
         }
     }
 }
@@ -63,7 +79,8 @@ intellijPlatform {
 // archives by the release workflow; gitignored), ship in the plugin's cli/ folder. The interface's cases
 // (plugin/cli/api-cases) are for the tests only.
 val cliDir = rootProject.layout.projectDirectory.dir("plugin/cli")
-tasks.named<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>("prepareSandbox") {
+// Also in the sandboxes of the tests: the plugin laid out as installed (FsmSchemas finds cli/schemas beside its lib/).
+tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>().configureEach {
     from(cliDir) {
         exclude("api-cases/**", "schemas/api.schema.json")
         into(intellijPlatform.projectName.map { "$it/cli" })

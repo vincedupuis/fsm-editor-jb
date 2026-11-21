@@ -1,6 +1,7 @@
 package com.vincegosoftware.fsmeditor.editor
 
 import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.vincegosoftware.fsmeditor.core.Contrast
 import com.vincegosoftware.fsmeditor.core.ElementColors
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
@@ -33,6 +34,18 @@ class Theme private constructor(
     val error = Color(0xe5, 0x14, 0x00)
     val warning = Color(0xbf, 0x88, 0x03)
     val info = Color(0x1a, 0x85, 0xff)
+
+    /** A signal color for a line or shape (a problem, a trace mark), readable on this theme ([Contrast.MARK]). */
+    fun mark(c: Color): Color = readable(c, Contrast.MARK)
+
+    /** A signal color for text (a taken transition's label), readable on this theme ([Contrast.TEXT]). */
+    fun textOf(c: Color): Color = readable(c, Contrast.TEXT)
+
+    // Against a state's fill, between the background and the foreground: the closer of the two to a signal color.
+    private fun readable(c: Color, min: Double): Color {
+        val (r, g, b) = Contrast.readable(Triple(c.red, c.green, c.blue), Triple(stateFill.red, stateFill.green, stateFill.blue), Triple(foreground.red, foreground.green, foreground.blue), min)
+        return Color(r, g, b)
+    }
 
     /** Fill of a colored shape: a light tint of its color over the shape background. */
     fun tint(c: Color, background: Color): Color = mix(background, c, ElementColors.TINT_AMOUNT)

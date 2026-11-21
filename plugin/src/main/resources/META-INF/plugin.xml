@@ -25,6 +25,8 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.xml</depends>
     <depends>com.intellij.modules.json</depends>
+    <!-- The merge of a file with conflicts (AbstractVcsHelper): a plugin of its own since 2025.3. -->
+    <depends>com.intellij.modules.vcs</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="FSM State Machine" implementationClass="com.vincegosoftware.fsmeditor.FsmFileType"

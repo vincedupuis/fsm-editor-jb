@@ -1,0 +1,77 @@
+# Tests the plugin on every push and pull request: the core and the headless IDE tests on Linux, macOS and Windows
+# (the plugin in an IDE sandbox, with that platform's fsm-editor-common sidecar), the headless IDE tests on the newest
+# IDE release too, and the Plugin Verifier on IntelliJ IDEA, PyCharm, CLion, Rider and WebStorm (verifyIdes).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        platform: [oldest]
+        include:
+          - os: ubuntu-latest
+            platform: newest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Fetch fsm-editor-common, fsm-cli's templates, the schemas and the interface's cases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(sed -n 's/^ *FSM_COMMON_VERSION: *//p' .github/workflows/release.yml | tr -d '\r')
+          gh release download "v$v" -R vincedupuis/fsm-editor-common -p "fsm-editor-common-*" -D "$RUNNER_TEMP/common"
+          for archive in "$RUNNER_TEMP"/common/*; do
+            case "$archive" in
+              *.zip) unzip -q "$archive" -d "$RUNNER_TEMP/common" ;;
+              *.tar.gz) tar xzf "$archive" -C "$RUNNER_TEMP/common" ;;
+            esac
+          done
+          scripts/fetch-common.sh "$RUNNER_TEMP/common"
+
+      - name: Test
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = newest ]; then
+            ./gradlew :plugin:test -PplatformVersion=$(sed -n 's/^newestPlatformVersion *= *//p' gradle.properties | tr -d '\r')
+          else
+            ./gradlew :core:test :plugin:test
+          fi
+
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      # The verifier downloads every IDE it checks against: room for them.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Verify against the IDEs
+        run: ./gradlew :plugin:verifyPlugin -PverifyAll

@@ -1,5 +1,6 @@
 package com.vincegosoftware.fsmeditor.editor
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.popup.JBPopup
@@ -395,7 +396,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             toolTipText = "Choose any color"
             addActionListener {
                 popup?.cancel()
-                val chosen = ColorChooserService.instance.showDialog(anchor, title, Theme.colorOf(value), false)
+                val chosen = ApplicationManager.getApplication().getService(ColorChooserService::class.java).showDialog(anchor, title, Theme.colorOf(value), false)
                     ?: return@addActionListener
                 val hex = "#%02x%02x%02x".format(chosen.red, chosen.green, chosen.blue)
                 if (hex != value) onChange(hex)
