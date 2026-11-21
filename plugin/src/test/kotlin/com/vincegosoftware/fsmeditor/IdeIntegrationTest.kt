@@ -1,9 +1,16 @@
 package com.vincegosoftware.fsmeditor
 
+import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.IdeActions
+import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.testFramework.TestActionEvent
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.util.Disposer
@@ -50,9 +57,13 @@ class IdeIntegrationTest : BasePlatformTestCase() {
 
     private fun default(name: String) = MachineFiles.write(FsmModel.createDefault(name))
 
+    @Scenario("text-editor-json")
     fun testTheTextTabHasTheSchemasOfBothFiles() {
         val model = myFixture.addFileToProject("Machine.fsm", default("Machine").modelText).virtualFile
         val layout = myFixture.addFileToProject("Machine.fsm.layout", default("Machine").layoutText!!).virtualFile
+        // Both JSON in the text editor.
+        assertTrue(model.fileType is com.intellij.json.JsonFileType)
+        assertEquals("JSON", layout.fileType.name)
         val providers = FsmSchemas().getProviders(project)
         val forModel = providers.filter { it.isAvailable(model) }
         val forLayout = providers.filter { it.isAvailable(layout) }
@@ -66,50 +77,121 @@ class IdeIntegrationTest : BasePlatformTestCase() {
         assertTrue("completion from the schema: $items", items.any { it.contains("elements") })
     }
 
+    @Scenario("layout-follows-rename")
     fun testTheLayoutFileFollowsItsModelFileWhenRenamedOrMoved() {
-        val model = myFixture.addFileToProject("A.fsm", default("A").modelText).virtualFile
-        myFixture.addFileToProject("A.fsm.layout", default("A").layoutText!!)
-        WriteAction.runAndWait<Throwable> { model.rename(this, "B.fsm") }
-        waitFor("B.fsm.layout") { model.parent.findChild("B.fsm.layout") != null }
-        assertNull(model.parent.findChild("A.fsm.layout"))
+        val model = myFixture.addFileToProject("Rename.fsm", File(examples, "Payment.fsm").readText()).virtualFile
+        myFixture.addFileToProject("Rename.fsm.layout", File(examples, "Payment.fsm.layout").readText())
+        WriteAction.runAndWait<Throwable> { model.rename(this, "Renamed.fsm") }
+        waitFor("Renamed.fsm.layout") { model.parent.findChild("Renamed.fsm.layout") != null }
+        assertNull(model.parent.findChild("Rename.fsm.layout"))
         val folder = WriteAction.computeAndWait<com.intellij.openapi.vfs.VirtualFile, Throwable> { model.parent.createChildDirectory(this, "sub") }
         WriteAction.runAndWait<Throwable> { model.move(this, folder) }
-        waitFor("sub/B.fsm.layout") { folder.findChild("B.fsm.layout") != null }
-        assertNull(folder.parent.findChild("B.fsm.layout"))
+        waitFor("sub/Renamed.fsm.layout") { folder.findChild("Renamed.fsm.layout") != null }
+        assertNull(folder.parent.findChild("Renamed.fsm.layout"))
     }
 
-    fun testTheIdesCopyCutPasteAndDeleteActOnTheDiagram() {
-        myFixture.addFileToProject("MediaPlayer.fsm.layout", File(examples, "MediaPlayer.fsm.layout").readText())
-        val file = myFixture.addFileToProject("MediaPlayer.fsm", File(examples, "MediaPlayer.fsm").readText()).virtualFile
+    private fun open(name: String, text: String, layout: String? = null): FsmFileEditor {
+        if (layout != null) myFixture.addFileToProject("$name.layout", layout)
+        val file = myFixture.addFileToProject(name, text).virtualFile
         val editor = FsmEditorProvider().createEditor(project, file) as FsmFileEditor
         Disposer.register(testRootDisposable, editor)
-        waitFor("the diagram") { editor.pane.panel.session != null }
-        val panel = editor.pane.panel
-        val session = panel.session!!
-        val states = { session.model.vertices.count { it.type.key == "state" } }
-        val before = states()
-        session.selection = linkedSetOf(session.model.vertices.first { it.name == "Off" }.id)
-        // What the canvas hands the IDE's Copy, Cut, Paste and Delete (its uiDataSnapshot), while it has the focus.
-        assertTrue(panel.canvas is UiDataProvider)
-        val context = SimpleDataContext.builder().build()
-        val handler = panel.clipboardHandler
-        val (copy, paste, cut, delete) = listOf(handler, handler, handler, handler)
-        assertTrue(copy.isCopyEnabled(context))
-        copy.performCopy(context)
-        paste.performPaste(context)
-        waitFor("the paste") { panel.session!!.model.vertices.count { it.type.key == "state" } == before + 1 }
-        val pasted = panel.session!!
-        pasted.selection = linkedSetOf(pasted.model.vertices.first { it.name == "Off" }.id)
-        cut.performCut(context)
-        waitFor("the cut") { panel.session!!.model.vertices.none { it.name == "Off" } }
-        val after = panel.session!!
-        after.selection = linkedSetOf(after.model.vertices.first { it.name == "Fault" }.id)
-        assertTrue(delete.canDeleteElement(context))
-        delete.deleteElement(context)
-        waitFor("the delete") { panel.session!!.model.vertices.none { it.name == "Fault" } }
+        waitFor("the diagram of $name: ${editor.source.state.problems?.map { it.message }}") { editor.pane.panel.session != null }
+        return editor
     }
 
+    private fun openExample(name: String) =
+        open(name, File(examples, name).readText(), File(examples, "$name.layout").readText())
+
+    /** Runs the IDE's action [id] as its keys and menus do, on [context] (the focused component's data). */
+    private fun perform(id: String, context: DataContext) {
+        val action = ActionManager.getInstance().getAction(id)
+        val e = TestActionEvent.createTestEvent(action, context)
+        action.update(e)
+        assertTrue("$id is enabled", e.presentation.isEnabled)
+        action.actionPerformed(e)
+    }
+
+    /** What the IDE's actions get from the diagram when it has the focus (the canvas's uiDataSnapshot). */
+    private fun contextOf(editor: FsmFileEditor): DataContext = DataManager.getInstance().getDataContext(editor.pane.panel.canvas)
+
+    private fun documentText(file: com.intellij.openapi.vfs.VirtualFile?) = file?.let { FileDocumentManager.getInstance().getDocument(it)?.text }
+
+    private fun disk(file: com.intellij.openapi.vfs.VirtualFile?) = file?.let { com.intellij.openapi.vfs.VfsUtilCore.loadText(it) }
+
+    /**
+     * The IDE's Copy, Paste, Cut and Delete (CopyAction and the others, as Ctrl+C… and the Edit menu run them) and
+     * Select All on the diagram, then Undo, Redo and saving the paste. The IDE's Select All action is the text
+     * editor's: on the diagram, its key (Ctrl+A, ⌘A) is the canvas's.
+     */
+    @Scenario("ide-edit-commands", "undo-redo-save-both-files")
+    fun testTheIdesCopyCutPasteAndDeleteActOnTheDiagram() {
+        // The IDE's data manager, which asks the components (the tests' ignores them).
+        com.intellij.ide.impl.HeadlessDataManager.fallbackToProductionDataManager(testRootDisposable)
+        myFixture.addFileToProject("Payment.fsm", File(examples, "Payment.fsm").readText())
+        myFixture.addFileToProject("Payment.fsm.layout", File(examples, "Payment.fsm.layout").readText())
+        val order = openExample("Order.fsm")
+        val empty = open("Empty.fsm", "{\n  \"version\": 1,\n  \"name\": \"Empty\",\n  \"type\": \"behavioral\"\n}\n")
+        val orderText = documentText(order.file)
+        val orderSession = order.pane.panel.session!!
+        val names = orderSession.model.vertices.map { it.name }.filter { it.isNotEmpty() && !it.endsWith("*") }
+        assertTrue(names.contains("Cart"))
+
+        // Select All and Copy in Order.
+        val canvas = order.pane.panel.canvas
+        assertTrue(canvas is UiDataProvider)
+        val mask = if (com.intellij.openapi.util.SystemInfo.isMac) java.awt.event.InputEvent.META_DOWN_MASK else java.awt.event.InputEvent.CTRL_DOWN_MASK
+        val selectAll = java.awt.event.KeyEvent(canvas, java.awt.event.KeyEvent.KEY_PRESSED, System.currentTimeMillis(), mask, java.awt.event.KeyEvent.VK_A, 'a')
+        canvas.keyListeners.forEach { it.keyPressed(selectAll) }
+        assertEquals(orderSession.model.vertices.map { it.id }.toSet(), orderSession.selection)
+        perform(IdeActions.ACTION_COPY, contextOf(order))
+
+        // Paste in Empty.fsm: Order's elements, Order unchanged.
+        perform(IdeActions.ACTION_PASTE, contextOf(empty))
+        val emptyNames = { empty.pane.panel.session!!.model.vertices.map { it.name } }
+        waitFor("the paste") { emptyNames().containsAll(names) }
+        assertEquals(orderText, documentText(order.file))
+        assertFalse(order.isModified)
+
+        // Undo, Redo, and saving both files.
+        assertTrue(empty.isModified)
+        val layout = { empty.file.parent.findChild("Empty.fsm.layout") }
+        val layoutBefore = disk(layout())
+        val undoContext = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, project).add(PlatformCoreDataKeys.FILE_EDITOR, empty).build()
+        perform(IdeActions.ACTION_UNDO, undoContext)
+        waitFor("the undo") { "Cart" !in emptyNames() }
+        // The documents are unchanged: the texts on disk. (The IDE keeps a document marked changed after an Undo back
+        // to its saved text, a text file's too, until it is saved.)
+        assertEquals(emptyList<String>(), empty.source.documents().map { FileDocumentManager.getInstance().getFile(it)!! }.filter { documentText(it) != disk(it) }.map { it.name })
+        perform(IdeActions.ACTION_REDO, undoContext)
+        waitFor("the redo") { "Cart" in emptyNames() }
+        assertTrue(empty.isModified)
+        FileDocumentManager.getInstance().saveAllDocuments()
+        assertFalse(empty.isModified)
+        assertTrue(disk(empty.file)!!.contains("\"Cart\""))
+        assertNotNull(layout())
+        assertFalse(layoutBefore == disk(layout()))
+
+        // In Order: Cut a selected state, Delete another, then both undone (Order back as it was).
+        val session = { order.pane.panel.session!! }
+        val orderNames = { session().model.vertices.map { it.name } }
+        session().selection = linkedSetOf(session().model.vertices.first { it.name == "Cart" }.id)
+        perform(IdeActions.ACTION_CUT, contextOf(order))
+        waitFor("the cut") { "Cart" !in orderNames() }
+        session().selection = linkedSetOf(session().model.vertices.first { it.name == "Shipped" }.id)
+        perform(IdeActions.ACTION_DELETE, contextOf(order))
+        waitFor("the delete") { "Shipped" !in orderNames() }
+        assertTrue(orderNames().contains("PaymentFailed"))
+        val orderUndo = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, project).add(PlatformCoreDataKeys.FILE_EDITOR, order).build()
+        perform(IdeActions.ACTION_UNDO, orderUndo)
+        perform(IdeActions.ACTION_UNDO, orderUndo)
+        assertEquals(orderText, documentText(order.file))
+        waitFor("Order back") { orderNames().containsAll(listOf("Cart", "Shipped")) }
+    }
+
+    @Scenario("trace-player")
     fun testTheToolWindowsShowTheirContent() {
+        // Show Trace Player is its tool window (View › Tool Windows › Trace Player): registered, and filled by its factory.
+        assertTrue(com.intellij.openapi.wm.ToolWindowEP.EP_NAME.extensionList.any { it.id == "Trace Player" && it.factoryClass == TracePlayerToolWindowFactory::class.java.name })
         for (factory in listOf(TracePlayerToolWindowFactory(), CodeGenToolWindowFactory())) {
             val window = ToolWindowHeadlessManagerImpl.MockToolWindow(project)
             factory.createToolWindowContent(project, window)
@@ -118,7 +200,10 @@ class IdeIntegrationTest : BasePlatformTestCase() {
         }
     }
 
+    @Scenario("commands-registered")
     fun testTheActionsAreInTheirMenus() {
+        // Show Trace Player: the Trace Player tool window, in View › Tool Windows.
+        assertTrue(com.intellij.openapi.wm.ToolWindowEP.EP_NAME.extensionList.any { it.id == "Trace Player" })
         val am = ActionManager.getInstance()
         val ids = listOf("FsmEditor.NewStateMachine", "FsmEditor.GenerateCode", "FsmEditor.ExportSvg", "FsmEditor.ExportPng", "FsmEditor.OpenAsText",
             "FsmEditor.CompareAsDiagrams", "FsmEditor.OpenInDiagram", "FsmEditor.OpenTrace", "FsmEditor.NewStateMachineInFolder")
@@ -134,6 +219,7 @@ class IdeIntegrationTest : BasePlatformTestCase() {
         assertTrue(children("FsmEditor.ToolsMenu").containsAll(listOf("FsmEditor.NewStateMachineInFolder", "FsmEditor.OpenTrace")))
     }
 
+    @Scenario("compare-as-diagrams")
     fun testCompareAsDiagramsGetsTheVersionsFromGit() {
         val dir = Files.createTempDirectory("fsm-git").toFile()
         try {

@@ -69,6 +69,18 @@ class FsmEditorTest : BasePlatformTestCase() {
 
     private fun text(file: com.intellij.openapi.vfs.VirtualFile?) = file?.let { FileDocumentManager.getInstance().getDocument(it)?.text }
 
+    /** The text on disk (the file system's, not the document's). */
+    private fun disk(file: com.intellij.openapi.vfs.VirtualFile?) = file?.let { com.intellij.openapi.vfs.VfsUtilCore.loadText(it) }
+
+    /** `Broken.fsm`: a copy of MediaPlayer.fsm whose `Stopped -play-> Playing` has the guard `count > 0`. */
+    private val broken: String
+        get() {
+            val media = File(examples, "MediaPlayer.fsm").readText().replace("\r\n", "\n")
+            assertTrue(media.contains(PLAY))
+            return media.replaceFirst(PLAY, PLAY.replace("\"target\"", "\"guard\": \"count > 0\", \"target\""))
+        }
+
+    @Scenario("text-editor-json")
     fun testFsmFilesAreJsonWithTheDiagramFirst() {
         val psi = myFixture.configureByText("Machine.fsm", default("Machine").modelText)
         val file = psi.virtualFile
@@ -81,18 +93,42 @@ class FsmEditorTest : BasePlatformTestCase() {
         assertEquals("JSON", layout.fileType.name)
     }
 
+    @Scenario("old-file-opens-unchanged")
     fun testOldFilesAreXmlAndOpenUnchanged() {
-        val text = File(old, "Payment.fsm").readText()
-        val editor = openDiagram("Payment.fsm", text)
+        val editor = openDiagram("Old.fsm", OLD)
         assertSame(OldFsmFileType, editor.file.fileType)
-        assertEquals(text, text(editor.file))
-        assertNull(editor.file.parent.findChild("Payment.fsm.layout"))
+        assertTrue(editor.panel.session!!.model.vertices.any { it.name == "Idle" })
         assertFalse(editor.isModified)
-        // The first change writes the new format, both files.
+        assertEquals(OLD, text(editor.file))
+        assertEquals(OLD, disk(editor.file))
+        assertNull(editor.file.parent.findChild("Old.fsm.layout"))
+        // Also the old files of the examples.
+        val payment = openDiagram("Payment.fsm", File(old, "Payment.fsm").readText())
+        assertSame(OldFsmFileType, payment.file.fileType)
+        assertFalse(payment.isModified)
+        assertNull(payment.file.parent.findChild("Payment.fsm.layout"))
+    }
+
+    /**
+     * The IDE saves only changed documents, and an old file is converted at its first change: that change, then the
+     * save, writes the model file in the current format and its layout file.
+     */
+    @Scenario("old-file-saved-converts")
+    fun testSavingAnOldFileConvertsIt() {
+        val editor = openDiagram("Old.fsm", OLD)
         val session = editor.panel.session!!
-        session.createVertex("state", PointD(900.0, 600.0))!!
-        assertTrue(text(editor.file)!!.trimStart().startsWith("{"))
-        assertNotNull(editor.file.parent.findChild("Payment.fsm.layout"))
+        session.model.vertices.first { it.name == "Idle" }.x += 40
+        session.commit()
+        assertTrue(editor.isModified)
+        FileDocumentManager.getInstance().saveAllDocuments()
+        assertFalse(editor.isModified)
+        val layout = editor.file.parent.findChild("Old.fsm.layout")
+        assertNotNull("saving writes the layout file", layout)
+        val model = disk(editor.file)!!
+        assertFalse(com.vincegosoftware.fsmeditor.core.Format.isOldFormat(model))
+        val read = com.vincegosoftware.fsmeditor.core.Format.readMachine(model, disk(layout))
+        assertEquals(",Idle,state1*", read.model!!.vertices.joinToString(",") { it.name })
+        assertTrue(disk(layout)!!.contains("\"Idle\""))
     }
 
     fun testDiagramEditsAreOneUndoableChangeOfBothFiles() {
@@ -123,27 +159,56 @@ class FsmEditorTest : BasePlatformTestCase() {
         waitFor { session.model.vertices.any { it.name == state.name } }
     }
 
+    @Scenario("move-changes-layout-only")
     fun testAMoveChangesOnlyTheLayoutFile() {
-        val original = default("Machine")
-        val editor = openDiagram("Machine.fsm", original.modelText, original.layoutText)
+        val editor = openExample("MediaPlayer.fsm")
+        val layoutFile = editor.file.parent.findChild("MediaPlayer.fsm.layout")!!
+        val model = disk(editor.file)
+        val layout = disk(layoutFile)
         val session = editor.panel.session!!
-        val idle = session.model.vertices.first { it.name == "Idle" }
-        idle.x += 40
+        session.model.vertices.first { it.name == "Off" }.x += 40
         session.commit()
-        assertEquals(original.modelText, text(editor.file))
-        assertFalse(original.layoutText == text(editor.file.parent.findChild("Machine.fsm.layout")))
+        FileDocumentManager.getInstance().saveAllDocuments()
+        assertFalse(editor.isModified)
+        assertEquals(model, disk(editor.file))
+        assertFalse(layout == disk(layoutFile))
     }
 
+    @Scenario("text-edit-reaches-diagram")
     fun testTextChangesReachTheDiagram() {
-        val original = default("Machine")
-        val editor = openDiagram("Machine.fsm", original.modelText, original.layoutText)
-        val document = FileDocumentManager.getInstance().getDocument(editor.file)!!
+        myFixture.addFileToProject("Broken.fsm.layout", File(examples, "MediaPlayer.fsm.layout").readText())
+        // As text (the fixture's editor) and in the diagram.
+        val file = myFixture.configureByText("Broken.fsm", broken).virtualFile
+        val editor = FsmEditorProvider().createEditor(project, file) as FsmFileEditor
+        Disposer.register(testRootDisposable, editor)
+        waitFor { editor.panel.session != null }
+        val guards = { editor.panel.session!!.model.transitions.mapNotNull { it.guard.ifEmpty { null } } }
+        waitFor { "count > 0" in guards() }
+        val problems = { myFixture.doHighlighting(HighlightSeverity.WEAK_WARNING).mapNotNull { it.description }.filter { it.startsWith("Guard:") } }
+        assertEquals(1, problems().size)
+
+        val document = myFixture.editor.document
         WriteCommandAction.runWriteCommandAction(project) {
-            document.setText(document.text.replace("\"Idle\"", "\"Waiting\""))
+            val at = document.text.indexOf("count > 0")
+            document.replaceString(at, at + "count > 0".length, "isReady()")
         }
-        waitFor { editor.panel.session!!.model.vertices.any { it.name == "Waiting" } }
+        assertEquals(emptyList<String>(), problems())
+        waitFor { "isReady()" in guards() && "count > 0" !in guards() }
+        FileDocumentManager.getInstance().saveDocument(document)
+        assertTrue(disk(file)!!.contains("\"guard\": \"isReady()\""))
     }
 
+    @Scenario("validation-at-line")
+    fun testValidationIsAtTheLineOfTheElement() {
+        val text = broken
+        myFixture.configureByText("Broken.fsm", text)
+        val guard = myFixture.doHighlighting(HighlightSeverity.WEAK_WARNING).filter { it.description?.startsWith("Guard:") == true }
+        assertEquals(guard.map { it.description }.toString(), 1, guard.size)
+        assertTrue(guard[0].description, guard[0].description.contains("no variables"))
+        assertEquals(text.split("\n").indexOfFirst { it.contains("count > 0") }, myFixture.editor.document.getLineNumber(guard[0].startOffset))
+    }
+
+    @Scenario("submachine-references-resolve")
     fun testSubmachinesResolveAndValidationReachesTheText() {
         addExample("Payment.fsm")
         val order = File(examples, "Order.fsm").readText()
@@ -152,6 +217,11 @@ class FsmEditorTest : BasePlatformTestCase() {
         waitFor { session.submachines.isNotEmpty() }
         assertTrue(session.submachines.values.all { it.found })
         assertTrue(session.machines.any { it.name == "Payment" })
+        // No problem about the references, in the text either.
+        myFixture.configureFromExistingVirtualFile(editor.file)
+        val references = myFixture.doHighlighting(HighlightSeverity.WEAK_WARNING).mapNotNull { it.description }
+            .filter { Regex("not found|no entry or exit point|referenced as").containsMatchIn(it) }
+        assertEquals(emptyList<String>(), references)
 
         // A broken reference is reported in the text, at its line.
         myFixture.configureByText("Broken.fsm", order.replace("\"Payment.fsm\"", "\"Missing.fsm\""))
@@ -168,45 +238,62 @@ class FsmEditorTest : BasePlatformTestCase() {
         assertFalse(FsmDocuments.openSubmachine(project, localFile, ""))
     }
 
+    @Scenario("valid-machines-no-problems")
     fun testValidMachinesHaveNoErrorsInTheText() {
-        myFixture.configureByText("MediaPlayer.fsm", File(examples, "MediaPlayer.fsm").readText())
-        assertEmpty(myFixture.doHighlighting(HighlightSeverity.WARNING).map { it.description })
+        val names = listOf("MediaPlayer.fsm", "Order.fsm", "Payment.fsm")
+        names.forEach(::addExample)
+        for (name in names) {
+            myFixture.configureFromExistingVirtualFile(myFixture.findFileInTempDir(name))
+            assertEquals(name, emptyList<String>(), myFixture.doHighlighting(HighlightSeverity.WEAK_WARNING).mapNotNull { it.description })
+        }
     }
 
     /** A file with merge conflicts opens as the merge; taking the incoming side and completing writes it without markers. */
+    @Scenario("merge-conflicts")
     fun testMergeConflictsOpenAsTheDiagramMerge() {
-        val current = default("Machine")
-        val incoming = MachineFiles.write(FsmModel.createDefault("Machine").also { m -> m.vertices.first { it.name == "Idle" }.name = "Ready" })
-        val conflicted = "<<<<<<< HEAD\n${current.modelText}=======\n${incoming.modelText}>>>>>>> other\n"
-        val editor = openDiagram("Machine.fsm", conflicted, current.layoutText)
+        val payment = File(examples, "Payment.fsm").readText().replace("\r\n", "\n")
+        val captured = "      \"entry\": \"capture()\",\n"
+        assertTrue(payment.contains(captured))
+        val conflicted = payment.replace(captured, "<<<<<<< HEAD\n      \"entry\": \"capture(); log()\",\n=======\n      \"entry\": \"settle()\",\n>>>>>>> feature\n")
+        val editor = openDiagram("Payment.fsm", conflicted, File(examples, "Payment.fsm.layout").readText())
         // The result starts as the current side, the file unchanged.
-        assertTrue(editor.panel.session!!.model.vertices.any { it.name == "Idle" })
+        val entry = { editor.panel.session!!.model.vertices.first { it.name == "Captured" }.entry }
+        assertEquals("capture(); log()", entry())
         assertEquals(conflicted, text(editor.file))
         waitFor { editor.panel.diff?.role == "result" }
-        assertTrue(editor.panel.diff!!.count > 0)
+        assertEquals(1, editor.panel.diff!!.count)
+        assertFalse(editor.isModified)
         editor.pane.mergeChoose(null, "incoming")
-        waitFor { editor.panel.session!!.model.vertices.any { it.name == "Ready" } }
+        waitFor { entry() == "settle()" }
         editor.pane.mergeComplete()
         assertFalse(com.vincegosoftware.fsmeditor.core.Merge.hasConflictMarkers(text(editor.file)))
         assertNull(editor.panel.diff)
     }
 
-    /** Compare as Diagrams: the two versions side by side, the changes marked on both. */
+    /** Compare as Diagrams: the file and another version of it side by side, the change marked on both. */
+    @Scenario("compare-as-diagrams")
     fun testTheDiagramDiffMarksTheChanges() {
-        val older = default("Machine")
-        val model = FsmModel.createDefault("Machine")
-        val newer = MachineFiles.write(model.also { m -> m.vertices.first { it.name == "Idle" }.name = "Ready" })
-        val file = myFixture.addFileToProject("Machine.fsm", newer.modelText).virtualFile
-        myFixture.addFileToProject("Machine.fsm.layout", newer.layoutText!!)
-        val viewer = DiagramDiffViewer(DiagramDiffRequest(project, file, MachineTexts(older.modelText, older.layoutText), "HEAD"))
+        val media = File(examples, "MediaPlayer.fsm").readText().replace("\r\n", "\n")
+        val layout = File(examples, "MediaPlayer.fsm.layout").readText()
+        assertTrue(media.contains("\"entry\": \"rewind()\""))
+        val file = myFixture.addFileToProject("MediaPlayer.fsm", media.replace("\"entry\": \"rewind()\"", "\"entry\": \"rewind(); beep()\"")).virtualFile
+        myFixture.addFileToProject("MediaPlayer.fsm.layout", layout)
+        val viewer = DiagramDiffViewer(DiagramDiffRequest(project, file, MachineTexts(media, layout), "HEAD"))
         Disposer.register(testRootDisposable, viewer)
         val panels = com.intellij.util.ui.UIUtil.findComponentsOfType(viewer.component, EditorPanel::class.java)
         assertEquals(2, panels.size)
         waitFor { panels.all { it.diff != null && it.session != null } }
         assertEquals(listOf("old", "new"), panels.map { it.diff!!.role })
-        assertTrue(panels[0].diff!!.marks.containsValue("removed"))
-        assertTrue(panels[1].diff!!.marks.containsValue("added"))
+        // The change, marked on Stopped in both.
+        for (p in panels) {
+            assertEquals(1, p.diff!!.count)
+            val stopped = p.session!!.model.vertices.first { it.name == "Stopped" }.id
+            assertEquals("changed", p.diff!!.marks[stopped])
+        }
         assertTrue(panels[0].readOnly)
+        // Linked: moving the view of one moves the other's.
+        panels[0].canvas.zoomAt(1.5, 10.0, 10.0)
+        assertEquals(panels[0].canvas.zoom, panels[1].canvas.zoom, 1e-9)
         // build/screenshots/diff.png: the older version on the left, the file on the right.
         val component = viewer.component
         component.setSize(1600, 700)
@@ -299,6 +386,7 @@ class FsmEditorTest : BasePlatformTestCase() {
      * inside Order) in their colors. Paints Order and Payment at the second checkout, and the tool window, into
      * build/screenshots/trace-*.png.
      */
+    @Scenario("trace-player")
     fun testTracePlayerReplaysTheDemoLogOnTheDiagrams() {
         val payment = openExample("Payment.fsm")
         val order = openExample("Order.fsm")
@@ -358,6 +446,58 @@ class FsmEditorTest : BasePlatformTestCase() {
         player.close(s.traces.single())
         push()
         assertNull(orderPanel.trace)
+    }
+
+    /**
+     * The Trace Player on MediaPlayer's diagram: demo.log's records, a log followed as it grows, and a log in a format of
+     * the Trace formats setting.
+     */
+    @Scenario("trace-player")
+    fun testTracePlayerFollowsALogAndReadsAConfiguredFormat() {
+        val media = openExample("MediaPlayer.fsm")
+        addExample("Order.fsm")
+        addExample("Payment.fsm")
+        val dir = com.intellij.openapi.util.io.FileUtil.createTempDirectory("fsm", "trace")
+        val player = com.vincegosoftware.fsmeditor.trace.TracePlayerService.getInstance(project)
+        val s = player.session
+        val settings = com.vincegosoftware.fsmeditor.settings.FsmSettings.getInstance().state
+        val formats = settings.traceFormats
+        fun active(): List<String> {
+            media.showTrace(player.viewFor(media.file.path))
+            return media.panel.trace?.instances?.flatMap { it.active } ?: emptyList()
+        }
+        try {
+            // demo.log: at its last record of MediaPlayer, the diagram shows its active states.
+            val demo = File(dir, "demo.log").apply { writeText(File(examples, "demo.log").readText()) }
+            player.open(listOf(demo.path))
+            waitFor { s.machines.isNotEmpty() && s.entries.size == 153 }
+            player.seek(s.entries.indexOfLast { it.record.machine == "MediaPlayer" })
+            assertTrue(active().isNotEmpty())
+            player.close(s.traces.single())
+
+            // A log followed as it grows (live: at its last record).
+            val run = File(dir, "run.log").apply { writeText("fsm MediaPlayer transition MediaPlayer.initial#1 initial -> Off\nfsm MediaPlayer enter Off Off\n") }
+            player.open(listOf(run.path))
+            waitFor { s.entries.size == 2 }
+            waitFor { "Off" in active() }
+            run.appendText("fsm MediaPlayer exit Off Off\nfsm MediaPlayer transition Off#1 powerOn -> On\nfsm MediaPlayer enter On On\n")
+            waitFor { s.entries.size == 5 && s.cursor == 4 }
+            waitFor { "On" in active() && "Off" !in active() }
+            player.close(s.traces.single())
+
+            // A log in a configured format.
+            settings.traceFormats = """[{ "name": "plain", "machine": "MediaPlayer", "rules": [{ "kind": "enter", "match": "^ENTER (?<name>\\w+)$" }] }]"""
+            player.formatsChanged()
+            val plain = File(dir, "plain.log").apply { writeText("ENTER Off\nENTER On\n") }
+            player.open(listOf(plain.path))
+            waitFor { s.traces.singleOrNull()?.records?.size == 2 }
+            assertEquals("plain", s.traces.single().format.name)
+            assertEquals(emptyList<String>(), s.problems)
+        } finally {
+            s.traces.toList().forEach { player.close(it) }
+            settings.traceFormats = formats
+            player.formatsChanged()
+        }
     }
 
     /**
@@ -432,6 +572,29 @@ class FsmEditorTest : BasePlatformTestCase() {
         click(1100, 700, 1)
         click(1100, 700, 1)
         assertEquals(before + 2, states())
+    }
+
+    companion object {
+        /** Stopped's transition on play in MediaPlayer.fsm (Paused has one too, later). */
+        const val PLAY = "{ \"type\": \"external\", \"trigger\": \"play\", \"target\": \"Playing\" }"
+
+        /** `Old.fsm`: a machine in the old format (XMI): an initial pseudostate, a state Idle, an unnamed state. */
+        val OLD = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <xmi:XMI xmi:version="20131001" xmlns:xmi="http://www.omg.org/spec/XMI/20131001" xmlns:uml="http://www.omg.org/spec/UML/20161101">
+              <uml:Model xmi:id="m" name="Old">
+                <packagedElement xmi:type="uml:StateMachine" xmi:id="sm" name="Old">
+                  <region xmi:type="uml:Region" xmi:id="r">
+                    <subvertex xmi:type="uml:Pseudostate" xmi:id="i" kind="initial"/>
+                    <subvertex xmi:type="uml:State" xmi:id="a" name="Idle"/>
+                    <subvertex xmi:type="uml:State" xmi:id="b"/>
+                    <transition xmi:type="uml:Transition" xmi:id="t0" source="i" target="a"/>
+                    <transition xmi:type="uml:Transition" xmi:id="t1" source="a" target="b"><trigger xmi:id="g" name="go"/></transition>
+                  </region>
+                </packagedElement>
+              </uml:Model>
+            </xmi:XMI>
+        """.trimIndent() + "\n"
     }
 
     private fun invalidateAll(c: java.awt.Component) {

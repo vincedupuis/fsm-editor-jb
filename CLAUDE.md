@@ -6,13 +6,15 @@ IntelliJ Platform plugin (2024.3+, all JetBrains IDEs with XML and JSON support)
 
 ```sh
 ./gradlew :core:test          # core tests: the client of fsm-editor-common (its interface's cases, plugin/cli/api-cases), editing, extraction, traces, GeometryTest: SvgExport against core/src/test/geometry, a copy of the VS Code edition's reference SVGs (its test/unit/fixtures/geometry), ClipboardTest: the clipboard JSON of core/src/test/clipboard (a copy of its test/unit/fixtures/clipboard), EditingCasesTest: the steps of core/src/test/editing (a copy of its test/unit/fixtures/editing) on DiagramSession, writing its files, ContrastTest, and ListingTest: the Marketplace listing (name and id in plugin.xml and the build script, icon, links)
-./gradlew :plugin:test        # headless IDE tests (FsmEditorTest, IdeIntegrationTest: schemas and completion, the layout file following renames and moves, the IDE's Copy/Cut/Paste/Delete, tool windows, actions and menus, Git versions, contrast in the Default and Darcula schemes); also paints the editor into plugin/build/screenshots/*.png
+./gradlew :plugin:test        # headless IDE tests (FsmEditorTest, IdeIntegrationTest, IdeEditorsTest in the IDE's own editor manager, CodeGeneratorTest: the IDE scenarios, below, and schemas and completion, tool windows, Git versions, contrast in the Default and Darcula schemes), ScenariosTest; also paints the editor into plugin/build/screenshots/*.png
 ./gradlew :plugin:test -PplatformVersion=2026.3   # the same on the newest IDE (newestPlatformVersion; IntelliJ IDEA, with its XML and VCS plugins, from 2025.3)
 ./gradlew :plugin:verifyPlugin -PverifyAll         # also against the IDEs of verifyIdes (gradle.properties): PyCharm, CLion, Rider, WebStorm
 ./gradlew :plugin:runIde      # sandbox IDE with the plugin; try examples/MediaPlayer.fsm and examples/Order.fsm (uses Payment.fsm)
 ./gradlew :plugin:buildPlugin :plugin:verifyPlugin [-PverifyIde=<local IDE path>]
 scripts/fetch-common.sh [--build] [<dir>]  # copy fsm-editor-common's sidecar into plugin/cli/<platform>, fsm-cli's templates, schemas/ and api-cases/ into plugin/cli (from ../fsm-editor-common + ../fsm-cli, or a folder of unpacked release archives; gitignored); the tests need the sidecar
 ```
+
+The IDE tests implement the IDE scenarios of `plugin/src/test/scenarios.md`, a copy of the VS Code edition's `test/scenarios.md` (the list shared by the three editions of what their tests check inside the IDE: documents, problems, editing through the IDE's commands, commands and tool windows): each `###` heading is a scenario's id, and a test names the ids it implements with `@Scenario("<id>", …)` (`Scenario.kt`). The copy is identical but for the rows of "Not applicable" for the edition `JetBrains` (a scenario the IDE has no equivalent for, with the reason). `ScenariosTest`, run by `:plugin:test`, fails when an id of the copy is neither named by a test nor not applicable to `JetBrains`, when a test names an id the copy doesn't have, or when an annotated method isn't a test. After a change to the VS Code edition's list, copy it here again, keep the `JetBrains` rows, and implement the new scenarios.
 
 `.github/workflows/ci.yml` runs on every push: the core and headless IDE tests on Linux, macOS and Windows, the headless IDE tests on `newestPlatformVersion`, and `verifyPlugin -PverifyAll`.
 
