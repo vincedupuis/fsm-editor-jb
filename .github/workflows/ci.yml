@@ -38,12 +38,16 @@ jobs:
         run: |
           v=$(sed -n 's/^ *FSM_COMMON_VERSION: *//p' .github/workflows/release.yml | tr -d '\r')
           gh release download "v$v" -R vincedupuis/fsm-editor-common -p "fsm-editor-common-*" -D "$RUNNER_TEMP/common"
-          for archive in "$RUNNER_TEMP"/common/*; do
-            case "$archive" in
-              *.zip) unzip -q "$archive" -d "$RUNNER_TEMP/common" ;;
-              *.tar.gz) tar xzf "$archive" -C "$RUNNER_TEMP/common" ;;
-            esac
-          done
+          # From inside the folder, with relative names: Git Bash's tar takes "D:\..." for a remote host.
+          (
+            cd "$RUNNER_TEMP/common"
+            for archive in *; do
+              case "$archive" in
+                *.zip) unzip -q "$archive" ;;
+                *.tar.gz) tar xzf "$archive" ;;
+              esac
+            done
+          )
           scripts/fetch-common.sh "$RUNNER_TEMP/common"
 
       - name: Test
