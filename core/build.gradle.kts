@@ -45,7 +45,15 @@ tasks.test {
     systemProperty("fsm.root", rootProject.projectDir.absolutePath)
     inputs.files(rootProject.files("plugin/src/main/resources/META-INF/plugin.xml", "plugin/build.gradle.kts", "README.md"))
     inputs.dir(rootProject.file("docs"))
-    // The sidecar of this machine (plugin/cli/<platform>/), when scripts/fetch-common.sh copied it.
-    fileTree(rootProject.file("plugin/cli")).matching { include("*/fsm-editor-common*") }.files.firstOrNull()
+    // The sidecar of this machine (plugin/cli/<platform>/, as Common.platform names it), when scripts/fetch-common.sh
+    // copied it: from a release's archives, it copies every platform's.
+    val platform = System.getProperty("os.name").lowercase().let {
+        when {
+            it.startsWith("windows") -> "windows"
+            it.startsWith("mac") -> "darwin"
+            else -> "linux"
+        }
+    } + "-" + (if (System.getProperty("os.arch").let { it == "aarch64" || it == "arm64" }) "arm64" else "x64")
+    fileTree(rootProject.file("plugin/cli/$platform")).matching { include("fsm-editor-common*") }.files.firstOrNull()
         ?.let { systemProperty("fsm.common", it.absolutePath) }
 }

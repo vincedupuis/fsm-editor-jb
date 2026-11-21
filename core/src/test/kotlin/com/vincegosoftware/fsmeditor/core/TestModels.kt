@@ -49,11 +49,10 @@ internal object TestFiles {
     val API_CASES: File = File(CLI, "api-cases/cases.jsonl")
 
     init {
-        // The sidecar of this machine's platform folder (the one scripts/fetch-common.sh copied), unless given.
+        // The sidecar of this machine's platform folder (scripts/fetch-common.sh copies every platform's from a
+        // release), unless given.
         if (Common.executablePath == null && System.getenv("FSM_EDITOR_COMMON") == null) {
-            Common.executablePath = CLI.listFiles { f -> f.isDirectory }?.mapNotNull { d ->
-                d.listFiles { f -> f.name.startsWith("fsm-editor-common") }?.firstOrNull()
-            }?.firstOrNull()?.path
+            Common.executablePath = File(CLI, Common.platform).listFiles { f -> f.name.startsWith("fsm-editor-common") }?.firstOrNull()?.path
         }
     }
 

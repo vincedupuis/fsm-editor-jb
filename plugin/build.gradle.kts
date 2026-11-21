@@ -90,8 +90,16 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>(
 tasks.test {
     systemProperty("fsm.examples", rootProject.file("examples").absolutePath)
     systemProperty("fsm.cli", cliDir.asFile.absolutePath)
-    // The sidecar of this machine (plugin/cli/<platform>/), when scripts/fetch-common.sh copied it.
-    fileTree(rootProject.file("plugin/cli")).matching { include("*/fsm-editor-common*") }.files.firstOrNull()
+    // The sidecar of this machine (plugin/cli/<platform>/, as Common.platform names it), when scripts/fetch-common.sh
+    // copied it: from a release's archives, it copies every platform's.
+    val platform = System.getProperty("os.name").lowercase().let {
+        when {
+            it.startsWith("windows") -> "windows"
+            it.startsWith("mac") -> "darwin"
+            else -> "linux"
+        }
+    } + "-" + (if (System.getProperty("os.arch").let { it == "aarch64" || it == "arm64" }) "arm64" else "x64")
+    fileTree(rootProject.file("plugin/cli/$platform")).matching { include("fsm-editor-common*") }.files.firstOrNull()
         ?.let { systemProperty("fsm.common", it.absolutePath) }
     systemProperty("fsm.screenshots", layout.buildDirectory.dir("screenshots").get().asFile.absolutePath)
 }
