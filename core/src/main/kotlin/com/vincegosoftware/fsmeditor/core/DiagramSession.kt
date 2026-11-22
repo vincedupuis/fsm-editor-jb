@@ -220,11 +220,8 @@ class DiagramSession(model: FsmModel) {
             v.y = Geometry.snap(p.y - v.h / 2)
             val r = Geometry.regionAt(index, p, emptySet())
             v.parent = r?.id ?: rootRegion
-            // A region has one initial, one shallow and one deep history pseudostate at most (the file holds one).
-            if ((v.type == VertexType.Initial || v.type == VertexType.ShallowHistory || v.type == VertexType.DeepHistory) &&
-                model.vertices.any { it.parent == v.parent && it.type == v.type }
-            ) {
-                say("This region already has ${if (v.type == VertexType.Initial) "an initial pseudostate" else "a ${v.type.title.lowercase()}"}.")
+            regionProblem(listOf(v), v.parent)?.let {
+                say(it)
                 return null
             }
         }
@@ -362,6 +359,10 @@ class DiagramSession(model: FsmModel) {
     fun connect(source: Vertex, targetId: String): Transition? {
         if (source.type == VertexType.Comment) {
             if (targetId == source.id) return null
+            anchorProblem(targetId)?.let {
+                say(it)
+                return null
+            }
             if (targetId !in source.anchors) source.anchors.add(targetId)
             selection = linkedSetOf(source.id)
             commit()
@@ -369,6 +370,10 @@ class DiagramSession(model: FsmModel) {
         }
         val target = index.vertex(targetId) ?: return null
         if (target.type == VertexType.Comment) {
+            anchorProblem(source.id)?.let {
+                say(it)
+                return null
+            }
             if (source.id !in target.anchors) target.anchors.add(source.id)
             commit()
             return null
@@ -383,6 +388,60 @@ class DiagramSession(model: FsmModel) {
         commit()
         return t
     }
+
+    /** Why a comment can't be attached to element [id] (the file doesn't name an initial pseudostate or its transition), or null. */
+    private fun anchorProblem(id: String): String? {
+        val t = index.transition(id)
+        val v = if (t != null) index.vertex(t.source) else index.vertex(id)
+        return if (v != null && v.type == VertexType.Initial) ANCHOR_INITIAL else null
+    }
+
+    private fun anchored(id: String) = model.vertices.any { it.type == VertexType.Comment && id in it.anchors }
+
+    /**
+     * Why transition [t] can't go from [source] to [target] (reconnected or reversed), or null when it can: as drawing it
+     * would be, and as the file holds it.
+     */
+    private fun transitionProblem(t: Transition, source: Vertex, target: Vertex): String? =
+        connectProblem(source, target, t) ?: when {
+            t.kind == TransitionKind.Internal && source !== target -> "An internal transition stays on its state."
+            isStart(source) && beyondAction(t) -> startOnly(source)
+            source.type == VertexType.Initial && anchored(t.id) -> ANCHOR_INITIAL
+            else -> null
+        }
+
+    /**
+     * Why vertices [vs] can't all be in region [regionId], or null when they can: a region has one initial, one shallow
+     * and one deep history pseudostate at most (the file holds one).
+     */
+    private fun regionProblem(vs: List<Vertex>, regionId: String): String? {
+        val ids = vs.map { it.id }.toSet()
+        for (type in listOf(VertexType.Initial, VertexType.ShallowHistory, VertexType.DeepHistory)) {
+            val n = vs.count { it.type == type }
+            if (n > 0 && (n > 1 || model.vertices.any { it.parent == regionId && it.type == type && it.id !in ids })) {
+                return "This region already has ${if (type == VertexType.Initial) "an initial pseudostate" else "a ${type.title.lowercase()}"}."
+            }
+        }
+        return null
+    }
+
+    /** Why pseudostate [v] can't become a [type], or null when it can. */
+    private fun typeProblem(v: Vertex, type: VertexType): String? {
+        if (type == v.type) return null
+        val outs = model.transitions.filter { it.source == v.id }
+        val a = v.copy().also { it.type = type }
+        if (type == VertexType.Terminate && outs.isNotEmpty()) return "A terminate cannot have outgoing transitions."
+        if (!isStart(a)) return null
+        if (type == VertexType.Initial && model.transitions.any { it.target == v.id }) return "An initial pseudostate cannot be the target of a transition."
+        if (outs.size > 1) return "A${if (type == VertexType.Initial) "n initial pseudostate" else " history pseudostate"} has one transition only."
+        if (outs.any { beyondAction(it) }) return startOnly(a)
+        if (type == VertexType.Initial && (anchored(v.id) || outs.any { anchored(it.id) })) return ANCHOR_INITIAL
+        return regionProblem(listOf(a), v.parent)
+    }
+
+    /** The kinds pseudostate [v] can be swapped for (its own included): those the file can hold it as, with its transitions and region. */
+    fun typeOptions(v: Vertex): List<VertexType> =
+        (Tools.swappable.firstOrNull { v.type in it } ?: emptyList()).filter { typeProblem(v, it) == null }
 
     /** Why a transition can't go from [source] to [target], or null when it can ([moving]: the transition being reconnected). */
     private fun connectProblem(source: Vertex, target: Vertex, moving: Transition? = null): String? = when {
@@ -407,7 +466,7 @@ class DiagramSession(model: FsmModel) {
         if ((if (atSource) t.source else t.target) == v.id) return
         val source = if (atSource) v else (index.vertex(t.source) ?: return)
         val target = if (atSource) (index.vertex(t.target) ?: return) else v
-        connectProblem(source, target, t)?.let {
+        transitionProblem(t, source, target)?.let {
             say(it)
             return
         }
@@ -485,7 +544,7 @@ class DiagramSession(model: FsmModel) {
         val s = index.vertex(t.source)
         val g = index.vertex(t.target)
         // Reversed, the target becomes the source: refused as drawing it that way would be.
-        if (g == null || s == null || connectProblem(g, s) != null) {
+        if (g == null || s == null || transitionProblem(t, g, s) != null) {
             say("This transition cannot be reversed.")
             return
         }
@@ -517,6 +576,10 @@ class DiagramSession(model: FsmModel) {
 
     /** Swaps a pseudostate for another kind of its group, keeping its center. */
     fun changeType(v: Vertex, type: VertexType) {
+        typeProblem(v, type)?.let {
+            say(it)
+            return
+        }
         val c = v.center
         val old = boxOf(v)
         v.type = type
@@ -550,6 +613,15 @@ class DiagramSession(model: FsmModel) {
             say("Remove the regions first: a submachine state cannot own regions.")
             return false
         }
+        val points = model.vertices.filter { it.parent == v.id && it.type != VertexType.Comment }
+        if (href.isNotEmpty() && points.any { it.type != VertexType.ConnectionPointRef }) {
+            say("Remove the entry and exit points first: a submachine state has references to its submachine's points instead.")
+            return false
+        }
+        if (href.isEmpty() && points.any { it.type == VertexType.ConnectionPointRef }) {
+            say("Remove the connection point references first: only a submachine state has them.")
+            return false
+        }
         v.submachine = href
         commit()
         return true
@@ -560,6 +632,20 @@ class DiagramSession(model: FsmModel) {
     // its state and the states around it in turn, and moving back during the same drag undoes that.
 
     companion object {
+        /** Initial and history pseudostates: the file holds their one transition's target and action only. */
+        fun isStart(v: Vertex?): Boolean =
+            v != null && (v.type == VertexType.Initial || v.type == VertexType.ShallowHistory || v.type == VertexType.DeepHistory)
+
+        /** Does [t] have triggers, a guard, conditions or a kind other than external? */
+        private fun beyondAction(t: Transition) =
+            t.triggers.isNotEmpty() || t.guard.isNotEmpty() || t.precondition.isNotEmpty() || t.postcondition.isNotEmpty() || t.kind != TransitionKind.External
+
+        /** Why a transition leaving [v] (an initial or history pseudostate) can't have triggers, a guard, conditions or a kind. */
+        fun startOnly(v: Vertex) =
+            "A transition leaving a${if (v.type == VertexType.Initial) "n initial" else " history"} pseudostate holds its target and an action only."
+
+        private const val ANCHOR_INITIAL = "A comment cannot be attached to an initial pseudostate or to its transition."
+
         /** Space kept between a region's border and the elements in it. */
         const val FIT_MARGIN = 10.0
         /** Smallest extent of a region along its state's region layout. */
@@ -1037,7 +1123,10 @@ class DiagramSession(model: FsmModel) {
     /** The selected elements (without a selected ancestor) and their groups, when they all lie in a composite state's region. */
     private fun leavingElements(): List<Vertex> {
         val roots = withGroupMates(selectionRoots())
-        return if (roots.isNotEmpty() && roots.all { !index.isBorderVertex(it) && regionOwnerOf(it.parent) != null }) roots else emptyList()
+        if (roots.isEmpty() || !roots.all { !index.isBorderVertex(it) && regionOwnerOf(it.parent) != null }) return emptyList()
+        // Not when a region would get a second initial or history pseudostate.
+        val into = roots.groupBy { regionOwnerOf(it.parent)!!.parent }
+        return if (into.any { (r, vs) -> regionProblem(vs, r) != null }) emptyList() else roots
     }
 
     val canLeaveParent: Boolean get() = leavingElements().isNotEmpty()
@@ -1117,7 +1206,9 @@ class DiagramSession(model: FsmModel) {
                 // A group drops as a whole: into the region that holds all its members, or nowhere.
                 if (v !== roots.first { it.group == v.group }) continue
                 val gr = dropRegionOf(dropBox(v), v.parent, moving)
-                if (gr != null) for (m in groupMembers(v.group)) m.parent = gr.id
+                val groupProblem = gr?.let { regionProblem(groupMembers(v.group), it.id) }
+                if (groupProblem != null) say(groupProblem)
+                else if (gr != null) for (m in groupMembers(v.group)) m.parent = gr.id
                 continue
             }
             if (v.type == VertexType.EntryPoint || v.type == VertexType.ExitPoint) {
@@ -1131,7 +1222,10 @@ class DiagramSession(model: FsmModel) {
                 }
                 continue
             }
-            dropRegionOf(v, moving)?.let { v.parent = it.id }
+            val r = dropRegionOf(v, moving)
+            val problem = r?.let { regionProblem(listOf(v), it.id) }
+            if (problem != null) say(problem)
+            else if (r != null) v.parent = r.id
         }
         commit()
     }
@@ -1274,12 +1368,22 @@ class DiagramSession(model: FsmModel) {
             } else if (at != null || !index.isRegion(v.parent)) {
                 v.parent = rootRegion
             }
-            v.anchors = v.anchors.filter { it in map }.mapTo(mutableListOf()) { map[it]!! }
+            // A region has one initial, one shallow and one deep history pseudostate at most: a copy that would be a second is left out.
+            val problem = if (parent == null) regionProblem(listOf(v), v.parent) else null
+            if (problem != null) {
+                say(problem)
+                map.remove(src.id)
+                continue
+            }
             model.vertices.add(v)
             added.add(v)
         }
+        if (added.isEmpty()) return
         for (src in data.transitions) {
-            if (src.source !in map || src.target !in map) continue
+            if (src.source !in map || src.target !in map) {
+                map.remove(src.id)
+                continue
+            }
             val t = src.copy()
             t.id = map[src.id]!!
             t.source = map[src.source]!!
@@ -1287,6 +1391,7 @@ class DiagramSession(model: FsmModel) {
             t.points = t.points.mapTo(mutableListOf()) { PointD(it.x + offX, it.y + offY) }
             model.transitions.add(t)
         }
+        for (v in added) v.anchors = v.anchors.filter { it in map }.mapTo(mutableListOf()) { map[it]!! }
         reindex()
         val addedIds = added.map { it.id }.toSet()
         val pastedRoots = added.filter { v -> index.ancestors(v).none { it.id in addedIds } }

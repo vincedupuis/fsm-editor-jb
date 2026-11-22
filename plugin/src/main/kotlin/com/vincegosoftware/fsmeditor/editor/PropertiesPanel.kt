@@ -537,7 +537,8 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         put(h3(v.type.title))
         val group = Tools.swappable.firstOrNull { v.type in it }
         if (group != null) {
-            put(selectField("Kind", v.type.key, group.map { it.key to it.title }) { value ->
+            // Only the kinds the file can hold this pseudostate as, with its transitions and region.
+            put(selectField("Kind", v.type.key, s.typeOptions(v).map { it.key to it.title }) { value ->
                 VertexType.parseKey(value)?.let { s.changeType(v, it) }
                 editor.renderProps()
             })
@@ -767,47 +768,56 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         val src = s.index.vertex(t.source)
         val tgt = s.index.vertex(t.target)
         fun nm(x: Vertex?) = if (x == null) "?" else Format.shown(x.name).ifEmpty { x.type.title }
-        put(
-            h3("Transition"),
-            muted("${nm(src)} → ${nm(tgt)}"),
-            selectField("Kind", t.kind.key, listOf("external" to "External", "local" to "Local", "internal" to "Internal")) {
-                s.setKind(t, if (it == "internal") TransitionKind.Internal else if (it == "local") TransitionKind.Local else TransitionKind.External)
-                editor.renderProps()
-            },
-            colorField(t.color, { s.setColor(t, null, it); editor.renderProps() }, "the transition"),
-        )
+        // Leaving an initial or history pseudostate: the file holds its target and action only.
+        val start = DiagramSession.isStart(src)
+        put(h3("Transition"), muted("${nm(src)} → ${nm(tgt)}"))
+        if (!start) {
+            put(
+                selectField("Kind", t.kind.key, listOf("external" to "External", "local" to "Local", "internal" to "Internal")) {
+                    s.setKind(t, if (it == "internal") TransitionKind.Internal else if (it == "local") TransitionKind.Local else TransitionKind.External)
+                    editor.renderProps()
+                },
+            )
+        }
+        put(colorField(t.color, { s.setColor(t, null, it); editor.renderProps() }, "the transition"))
         // Internal transitions drawn in their state's compartment take a single color.
         val inCompartment = t.kind == TransitionKind.Internal && t.source == t.target && src?.type == VertexType.State
         fun item(key: String) = if (inCompartment) null else key
-        put(
-            withColor(
-                listField("Triggers", t.triggers, { t.triggers = it.toMutableList(); commit() }, Expressions::checkTrigger, "event, after(500ms), after(2s)"),
-                s, t, item("triggers"), "the triggers",
-            ),
-        )
-        if (s.model.kind == MachineKind.Protocol) {
+        if (!start) {
             put(
                 withColor(
-                    textField("Precondition", t.precondition, { t.precondition = it; commit() }, Expressions::checkCondition, "e.g. isOpen()"),
-                    s, t, item("precondition"), "the precondition",
-                ),
-                withColor(
-                    textField("Postcondition", t.postcondition, { t.postcondition = it; commit() }, Expressions::checkCondition, "e.g. isClosed()"),
-                    s, t, item("postcondition"), "the postcondition",
+                    listField("Triggers", t.triggers, { t.triggers = it.toMutableList(); commit() }, Expressions::checkTrigger, "event, after(500ms), after(2s)"),
+                    s, t, item("triggers"), "the triggers",
                 ),
             )
+        }
+        if (s.model.kind == MachineKind.Protocol) {
+            if (!start) {
+                put(
+                    withColor(
+                        textField("Precondition", t.precondition, { t.precondition = it; commit() }, Expressions::checkCondition, "e.g. isOpen()"),
+                        s, t, item("precondition"), "the precondition",
+                    ),
+                    withColor(
+                        textField("Postcondition", t.postcondition, { t.postcondition = it; commit() }, Expressions::checkCondition, "e.g. isClosed()"),
+                        s, t, item("postcondition"), "the postcondition",
+                    ),
+                )
+            }
         } else {
             val allowElse = Labels.allowsElse(src)
-            put(
-                withColor(
-                    textField(
-                        "Guard", t.guard, { t.guard = it; commit() }, { Expressions.checkGuard(it, allowElse) },
-                        if (allowElse) "e.g. hasDisc() && !isJammed(), or else" else "e.g. hasDisc() && !isJammed()",
+            if (!start) {
+                put(
+                    withColor(
+                        textField(
+                            "Guard", t.guard, { t.guard = it; commit() }, { Expressions.checkGuard(it, allowElse) },
+                            if (allowElse) "e.g. hasDisc() && !isJammed(), or else" else "e.g. hasDisc() && !isJammed()",
+                        ),
+                        s, t, item("guard"), "the guard",
                     ),
-                    s, t, item("guard"), "the guard",
-                ),
-                withColor(textField("Action", t.action, { t.action = it; commit() }, Expressions::checkActions, "e.g. notify(); log()"), s, t, item("action"), "the action"),
-            )
+                )
+            }
+            put(withColor(textField("Action", t.action, { t.action = it; commit() }, Expressions::checkActions, "e.g. notify(); log()"), s, t, item("action"), "the action"))
         }
         put(h4("Routing"))
         val routing = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }

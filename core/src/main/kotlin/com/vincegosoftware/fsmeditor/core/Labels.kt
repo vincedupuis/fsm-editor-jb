@@ -63,6 +63,9 @@ object Labels {
             if (!ptrig.ok) return "Trigger: ${ptrig.error}"
             val post = Expressions.checkCondition(m.groups[3]?.value ?: "")
             if (!post.ok) return "Postcondition: ${post.error}"
+            if (source != null && DiagramSession.isStart(source) && (pre.value.isNotEmpty() || ptrig.value.isNotEmpty() || post.value.isNotEmpty())) {
+                return DiagramSession.startOnly(source)
+            }
             t.precondition = pre.value
             t.triggers = ptrig.value.toMutableList()
             t.postcondition = post.value
@@ -77,6 +80,7 @@ object Labels {
         if (!guard.ok) return "Guard: ${guard.error}"
         val action = Expressions.checkActions(if (slash >= 0) label.substring(slash + 1) else "")
         if (!action.ok) return "Action: ${action.error}"
+        if (source != null && DiagramSession.isStart(source) && (trig.value.isNotEmpty() || guard.value.isNotEmpty())) return DiagramSession.startOnly(source)
         t.triggers = trig.value.toMutableList()
         t.guard = guard.value
         t.action = action.value
