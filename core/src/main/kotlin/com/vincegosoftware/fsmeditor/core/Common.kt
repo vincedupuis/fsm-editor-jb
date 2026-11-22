@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 class CommonException(message: String) : Exception(message)
 
 /**
- * fsm-editor-common (github.com/vincedupuis/fsm-editor-common, Rust): the file half of the editions, written once.
+ * fsm-editor-common (github.com/vincedupuis/fsm-editor-common, Rust): the file services of the editions, written once.
  * Reading and writing a machine's two files, converting old (XMI) files, validation, the grammar's checks, comparing,
  * merging and code generation (fsm-cli's) are requests to its sidecar, `fsm-editor-common serve`, started on first use
  * and kept running: one JSON request per line on its standard input, one JSON answer per line on its standard output
