@@ -95,11 +95,14 @@ class IdeEditorsTest : FileEditorManagerTestCase() {
     }
 
     /** Alt+double-click on the element named [name] of [editor]'s diagram (the canvas's mouse listeners; headless, it isn't showing). */
-    private fun altDoubleClick(editor: FsmFileEditor, name: String) {
+    private fun altDoubleClick(editor: FsmFileEditor, name: String) = altClick(editor, name, 2)
+
+    /** [clicks] Alt+clicks on the element named [name] of [editor]'s diagram, as [altDoubleClick] gives them. */
+    private fun altClick(editor: FsmFileEditor, name: String, clicks: Int = 1) {
         val canvas = editor.pane.panel.canvas
         val v = editor.pane.panel.session!!.model.vertices.first { it.name == name }
         val at = canvas.toScreen(v.x + v.w / 2, v.y + v.h / 2)
-        repeat(2) {
+        repeat(clicks) {
             for (id in listOf(MouseEvent.MOUSE_PRESSED, MouseEvent.MOUSE_RELEASED)) {
                 val e = MouseEvent(
                     canvas, id, System.currentTimeMillis(), InputEvent.ALT_DOWN_MASK or (if (id == MouseEvent.MOUSE_PRESSED) InputEvent.BUTTON1_DOWN_MASK else 0),
@@ -176,6 +179,79 @@ class IdeEditorsTest : FileEditorManagerTestCase() {
         waitFor("Payment.fsm open") { fem.isFileOpen(payment) }
         assertTrue("Payment.fsm opens in the diagram", selected(payment) is FsmFileEditor)
         assertEquals(payment, fem.selectedFiles.first())
+    }
+
+    /** A left press at model point ([x], [y]) of [editor]'s diagram, dragged by ([dx], [dy]) screen pixels, and released. */
+    private fun leftDrag(editor: FsmFileEditor, x: Double, y: Double, dx: Int = 0, dy: Int = 0) {
+        val canvas = editor.pane.panel.canvas
+        val at = canvas.toScreen(x, y)
+        fun event(id: Int, px: Int, py: Int) = MouseEvent(
+            canvas, id, System.currentTimeMillis(), if (id == MouseEvent.MOUSE_RELEASED) 0 else InputEvent.BUTTON1_DOWN_MASK,
+            px, py, 1, false, MouseEvent.BUTTON1,
+        )
+        val x0 = at.x.toInt()
+        val y0 = at.y.toInt()
+        canvas.mouseListeners.forEach { it.mousePressed(event(MouseEvent.MOUSE_PRESSED, x0, y0)) }
+        if (dx != 0 || dy != 0) {
+            for (i in 1..4) canvas.mouseMotionListeners.forEach { it.mouseDragged(event(MouseEvent.MOUSE_DRAGGED, x0 + dx * i / 4, y0 + dy * i / 4)) }
+        }
+        canvas.mouseListeners.forEach { it.mouseReleased(event(MouseEvent.MOUSE_RELEASED, x0 + dx, y0 + dy)) }
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+    }
+
+    /** A composite state is taken by a click in its area, and moved by its border as by its title bar. */
+    fun testACompositeStateIsSelectedByItsAreaAndMovedByItsBorder() {
+        val player = openDiagram("MediaPlayer.fsm")
+        val s = player.pane.panel.session!!
+        val on = s.model.vertices.first { it.name == "On" }
+        val (x0, y0) = on.x to on.y
+        // Its area: the region's bottom right corner, away from its states.
+        leftDrag(player, on.x + on.w - 12, on.y + on.h - 12)
+        assertEquals(setOf(on.id), s.selection)
+        // Its left border: a drag moves it.
+        leftDrag(player, on.x + 1, on.y + on.h - 20, 40, 30)
+        waitFor("On moved") { s.model.vertices.first { it.name == "On" }.let { it.x > x0 && it.y > y0 } }
+    }
+
+    /** A middle click on the element named [name] of [editor]'s diagram. */
+    private fun middleClick(editor: FsmFileEditor, name: String) {
+        val canvas = editor.pane.panel.canvas
+        val v = editor.pane.panel.session!!.model.vertices.first { it.name == name }
+        val at = canvas.toScreen(v.x + v.w / 2, v.y + v.h / 2)
+        for (id in listOf(MouseEvent.MOUSE_PRESSED, MouseEvent.MOUSE_RELEASED)) {
+            val e = MouseEvent(
+                canvas, id, System.currentTimeMillis(), if (id == MouseEvent.MOUSE_PRESSED) InputEvent.BUTTON2_DOWN_MASK else 0,
+                at.x.toInt(), at.y.toInt(), 1, false, MouseEvent.BUTTON2,
+            )
+            canvas.mouseListeners.forEach { if (id == MouseEvent.MOUSE_PRESSED) it.mousePressed(e) else it.mouseReleased(e) }
+        }
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+    }
+
+    /**
+     * Alt+click and a middle click open an element's properties in a window; Alt+click on a submachine state, once the
+     * time of a double-click has passed.
+     */
+    fun testAltClickAndAMiddleClickOpenThePropertiesWindow() {
+        val order = openDiagram("Order.fsm")
+        val panel = order.pane.panel
+        fun id(name: String) = panel.session!!.model.vertices.first { it.name == name }.id
+        altClick(order, "Cart")
+        waitFor("Cart's properties window") { panel.propertiesWindowId == id("Cart") }
+        panel.closePropertiesWindow()
+        middleClick(order, "Shipped")
+        waitFor("Shipped's properties window") { panel.propertiesWindowId == id("Shipped") }
+        panel.closePropertiesWindow()
+        altClick(order, "Payment")
+        assertNull("not at once on a submachine state", panel.propertiesWindowId)
+        waitFor("Payment's properties window") { panel.propertiesWindowId == id("Payment") }
+        panel.closePropertiesWindow()
+        // Alt+double-click: the submachine, and no window.
+        altDoubleClick(order, "Payment")
+        waitFor("Payment.fsm open") { fem.isFileOpen(file("Payment.fsm")) }
+        Thread.sleep(700)
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        assertNull(panel.propertiesWindowId)
     }
 
     @Scenario("missing-submachine")

@@ -167,6 +167,9 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     private var popupProps: PropertiesPanel? = null
     private var popupId: String? = null
 
+    /** The element whose properties window is open (null: none, or the machine's). */
+    val propertiesWindowId: String? get() = if (propsPopup != null) popupId else null
+
     var session: DiagramSession? = null
         private set
 
@@ -876,7 +879,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             add(action("SVG", icon("export"), host::exportSvg, true).also { it.templatePresentation.description = "Export as SVG" })
             add(action("PNG", icon("export"), host::exportPng, true).also { it.templatePresentation.description = "Export as PNG" })
             addSeparator()
-            add(action("Text", icon("xmi"), host::openAsText, true).also { it.templatePresentation.description = "Open as Text: the model file in the Text tab" })
+            add(action("JSON", icon("json"), host::openAsText, true).also { it.templatePresentation.description = "Open as Text: the model file (JSON) in the Text tab" })
             addSeparator()
             add(paneToggle(toolboxPane))
             add(paneToggle(propsPane))
@@ -1026,9 +1029,6 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
             override fun mouseClicked(e: MouseEvent) = showProblems(problems)
         })
         val s = session
-        val counts = JBLabel(if (s == null) "" else "${s.model.vertices.count { it.type == VertexType.State }} states · ${s.model.transitions.size} transitions").apply {
-            foreground = th.muted
-        }
         val toolName = canvas.tool?.let { Tools.byId(it)?.label }
         val right = JBLabel(
             when {
@@ -1040,7 +1040,6 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         val west = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
             isOpaque = false
             add(problems)
-            add(counts)
         }
         status.removeAll()
         status.border = JBUI.Borders.compound(JBUI.Borders.customLineTop(JBColor.border()), JBUI.Borders.empty(2, 10))

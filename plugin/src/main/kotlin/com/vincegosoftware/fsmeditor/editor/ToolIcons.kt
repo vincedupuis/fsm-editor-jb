@@ -58,7 +58,7 @@ object ToolIcons {
         "zoomOut" to listOf(circle(11.0, 11.0, 7.0), s("M21,21 l-5,-5 M8,11 h6")),
         "fit" to listOf(s("M4,9 V4 h5 M20,9 V4 h-5 M4,15 v5 h5 M20,15 v5 h-5")),
         "export" to listOf(s("M12,3 v12 M7,8 l5,-5 l5,5"), s("M5,14 v6 h14 v-6")),
-        "xmi" to listOf(s("M8,4 C6,4 6,6 6,8 C6,10 4,12 4,12 C4,12 6,12 6,16 C6,20 6,20 8,20 M16,4 C18,4 18,6 18,8 C18,10 20,12 20,12 C20,12 18,12 18,16 C18,20 18,20 16,20")),
+        "json" to listOf(s("M8,4 C6,4 6,6 6,8 C6,10 4,12 4,12 C4,12 6,12 6,16 C6,20 6,20 8,20 M16,4 C18,4 18,6 18,8 C18,10 20,12 20,12 C20,12 18,12 18,16 C18,20 18,20 16,20")),
         "code" to listOf(s("M8,7 l-5,5 l5,5 M16,7 l5,5 l-5,5 M14,4 l-4,16")),
         "trace" to listOf(s("M3,12 h4 l3,-7 l4,14 l3,-7 h4")),
         // The Trace Player's First, Previous and Next record (after VS Code's Restart, Step Back and Step Over).

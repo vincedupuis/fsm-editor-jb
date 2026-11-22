@@ -512,11 +512,12 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             "Double-click" to "empty canvas to add a state; a name or label to edit it.",
             "Drag" to "the ⊕ handle of a selected element to draw a transition.",
             "Double-click" to "a transition to add a bend point, a bend point to remove it.",
+            "Alt+click" to "(or middle-click) an element to edit its properties in a window; Alt+double-click a submachine state to open its machine.",
             "Drag" to "an end of a selected transition onto another element to reconnect it.",
             "Drag" to "a corner of a selected self-transition to reshape its loop; the far corner moves it to another corner of the state.",
             "Drop" to "an element entirely inside a region to nest it. It then stays in its region, which grows to hold it; right-click › Leave Parent takes it out.",
             "Drag" to "the line between two regions to resize the region before it.",
-            "Drag" to "a composite state by its title bar; dragging inside its regions selects what it encloses.",
+            "Drag" to "a composite state by its title bar or its border; dragging inside its regions selects what it encloses, a click there selects the state.",
             "Right-drag" to "Space+drag, middle-drag or two fingers pan; the wheel or a pinch zooms; F fits.",
             "Shift+click" to "a tool keeps it active.",
             "Label syntax" to if (m.kind == MachineKind.Protocol) "[isReady()] event / [isDone()]" else "event, after(2s) [isReady() && !isBusy()] / doIt(); log()",
@@ -599,14 +600,21 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
 
         put(h4("Submachine"))
         val current = v.submachine
-        val options = mutableListOf("" to "(none: not a submachine state)")
-        options.addAll(s.machines.map { it.href to "${it.name} (${it.file})" })
+        // Only what the file can hold: a state with regions or its own entry and exit points isn't offered a submachine,
+        // and a submachine state with connection point references isn't offered none.
+        val canBeSub = s.canBeSubmachine(v)
+        val canBePlain = s.canBePlain(v)
+        val options = mutableListOf<Pair<String, String>>()
+        if (current.isEmpty() || canBePlain) options.add("" to "(none: not a submachine state)")
+        if (current.isNotEmpty() || canBeSub) options.addAll(s.machines.map { it.href to "${it.name} (${it.file})" })
         if (current.isNotEmpty() && s.machines.none { it.href == current }) options.add(current to "${s.machineLabel(current)} (not found)")
         put(selectField("Referenced state machine", current, options) {
             s.setSubmachine(v, it)
             editor.renderProps()
         })
         if (s.machines.isEmpty() && current.isEmpty()) put(muted("No other state machine (.fsm) was found in the project."))
+        if (current.isEmpty() && !canBeSub && s.machines.isNotEmpty()) put(muted("Remove its regions and its entry and exit points to make it a submachine state."))
+        if (current.isNotEmpty() && !canBePlain) put(muted("Remove its connection point references to make it a plain state."))
         if (v.submachine.isNotEmpty()) {
             val href = v.submachine
             put(button("Open ${s.machineLabel(href)}", { editor.openSubmachine(href) }))
@@ -827,12 +835,15 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                 editor.renderProps()
             }
         })
-        routing.add(JButton("Reverse").apply {
-            addActionListener {
-                s.reverse(t)
-                editor.renderProps()
-            }
-        })
+        // Reversed, the target becomes the source: offered when it could be drawn that way.
+        if (s.canReverse(t)) {
+            routing.add(JButton("Reverse").apply {
+                addActionListener {
+                    s.reverse(t)
+                    editor.renderProps()
+                }
+            })
+        }
         routing.maximumSize = Dimension(Int.MAX_VALUE, routing.preferredSize.height)
         put(routing)
         issuesFor(t.id)?.let { put(it) }

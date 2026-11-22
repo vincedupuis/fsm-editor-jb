@@ -65,6 +65,7 @@ import java.lang.reflect.Proxy
 import javax.swing.JComponent
 import javax.swing.JMenuItem
 import javax.swing.SwingUtilities
+import javax.swing.Timer
 import java.awt.image.BufferedImage
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -752,7 +753,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     g.draw(shape)
                 }
             }
-            if (v.type != VertexType.Final && v.type != VertexType.Terminate) {
+            if (s.canStartFrom(v)) {
                 val c = connectHandle(v)
                 val pen = th.stroke(1.5)
                 val circle = Ellipse2D.Double(c.x - 7, c.y - 7, 14.0, 14.0)
@@ -819,7 +820,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         val only = if (s.selection.size == 1) ix.vertex(s.selection.first()) else null
         if (only != null) {
             val c = connectHandle(only)
-            if (only.type != VertexType.Final && only.type != VertexType.Terminate && Geo.dist(p, c) <= 7 + tolerance) {
+            if (s.canStartFrom(only) && Geo.dist(p, c) <= 7 + tolerance) {
                 return Hit(HitKind.Handle, handle = "connect")
             }
             if (only.type in RESIZABLE) {
@@ -1042,12 +1043,48 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
         var base: Set<String> = emptySet()
         /** A right-button pan, which opens the context menu when the pointer doesn't move. */
         var rightButton = false
+        /** A middle-button pan, which opens the properties window of the element under it when the pointer doesn't move. */
+        var middleButton = false
         /** Move, resize and region drags: the layout at the start, restored at each step. */
         var snapshot: DiagramSession.LayoutSnapshot? = null
         /** Resize, region and bend point drags: the layout before the drag changed anything, restored by Esc. */
         var undo: DiagramSession.LayoutSnapshot? = null
         /** Move: the boxes of the roots at the start. */
         var boxes: Map<String, RectD> = emptyMap()
+        /** Move after an Alt+click: the element whose properties window opens when the pointer doesn't move, and where. */
+        var propsId: String? = null
+        var propsAt: Point = Point()
+        /** Band: the composite state whose area it started in, which a click (no band drawn) takes; with Alt, its properties window. */
+        var area: String? = null
+        var areaProps = false
+    }
+
+    /** The properties window an Alt+click on a submachine state opens once no second click made it an Alt+double-click. */
+    private var propsTimer: Timer? = null
+
+    private fun stopPropsTimer() {
+        propsTimer?.stop()
+        propsTimer = null
+    }
+
+    /**
+     * The properties window of [id], after an Alt+click: at once, or on a submachine state once the time of a double-click
+     * has passed (an Alt+double-click opens its submachine instead).
+     */
+    private fun openPropertiesAfterClick(s: DiagramSession, id: String, at: Point) {
+        val v = s.index.vertex(id)
+        if (v == null || v.type != VertexType.State || v.submachine.isEmpty()) {
+            editor.openPropertiesWindow(id, at)
+            return
+        }
+        stopPropsTimer()
+        propsTimer = Timer(DOUBLE_CLICK_MS) {
+            stopPropsTimer()
+            if (s.index.vertex(id) != null) editor.openPropertiesWindow(id, at)
+        }.apply {
+            isRepeats = false
+            start()
+        }
     }
 
     private fun additive(e: InputEvent) = e.isShiftDown || e.isControlDown || e.isMetaDown
@@ -1060,6 +1097,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             val s = s ?: return
             requestFocusInWindow()
             editor.commitInlineEdit()
+            stopPropsTimer()
             val p = toWorld(e.point)
 
             if (SwingUtilities.isMiddleMouseButton(e) || SwingUtilities.isRightMouseButton(e) || space || tool != null) lastDown = null
@@ -1070,17 +1108,36 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                     it.viewY0 = viewY
                     it.start = p
                     it.rightButton = SwingUtilities.isRightMouseButton(e) && !space
+                    it.middleButton = SwingUtilities.isMiddleMouseButton(e) && !space
                 }
                 cursor = Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
                 return
             }
             if (!SwingUtilities.isLeftMouseButton(e)) return
+            // Alt+click on an element opens its properties in a window (on a state, once released without moving: Alt+drag
+            // moves it off the grid; on a submachine state, once no second click made it an Alt+double-click).
+            val altClick = e.isAltDown && !e.isShiftDown && !e.isControlDown && !e.isMetaDown && tool == null
+            s.reindex()
+            val altHit = if (altClick) inRegionAsEmpty(s, hitTest(s, p), p) else null
+            if (altHit != null && (altHit.kind == HitKind.Transition || altHit.kind == HitKind.Label)) {
+                lastDown = null
+                editor.openPropertiesWindow(altHit.id, e.point)
+                return
+            }
             // With a tool armed, every click uses it; a double-click with nothing to do is a plain press.
             if (tool == null) {
                 val last = lastDown
-                val dbl = last != null && e.`when` - last.first < 500 && e.point.distance(last.second) < 5
+                val dbl = last != null && e.`when` - last.first < DOUBLE_CLICK_MS && e.point.distance(last.second) < 5
                 lastDown = if (dbl) null else e.`when` to e.point
-                if (dbl && doubleClick(s, p, e)) {
+                if (dbl && altHit?.kind == HitKind.Vertex) {
+                    // Alt+double-click on a submachine state opens its submachine; on another element, it is an Alt+click.
+                    val v = s.index.vertex(altHit.id)!!
+                    if (v.type == VertexType.State && v.submachine.isNotEmpty()) {
+                        drag = null
+                        editor.openSubmachine(v.submachine)
+                        return
+                    }
+                } else if (dbl && doubleClick(s, p, e)) {
                     drag = null
                     return
                 }
@@ -1092,8 +1149,12 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             if (armed != null) {
                 val def = Tools.byId(armed)
                 if (armed == "transition") {
-                    if (hit.kind == HitKind.Vertex) startConnect(s.index.vertex(hit.id)!!, p)
-                    else editor.toast("Start the transition on a state or pseudostate.")
+                    if (hit.kind == HitKind.Vertex) {
+                        val v = s.index.vertex(hit.id)!!
+                        if (s.canStartFrom(v)) startConnect(v, p)
+                    } else {
+                        editor.toast("Start the transition on a state or pseudostate.")
+                    }
                 } else if (armed == "region") {
                     val st = if (hit.kind == HitKind.Vertex) s.index.vertex(hit.id) else Geo.stateAt(s.index, p, emptySet())
                     if (st != null && st.type == VertexType.State) {
@@ -1114,6 +1175,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 return
             }
 
+            // A composite state moves by its title bar and its contour: its regions are empty canvas, for a selection band
+            // and for a double-click adding a state; a click there (without a drag) takes the state.
+            val area = if (hit.kind == HitKind.Vertex && inRegionArea(s, s.index.vertex(hit.id)!!, p)) hit.id else null
             hit = inRegionAsEmpty(s, hit, p)
             when (hit.kind) {
                 HitKind.Handle -> {
@@ -1177,7 +1241,13 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                         clickedSelected = true
                     }
                     editor.renderProps()
-                    if (hit.kind == HitKind.Vertex && id in s.selection) startMove(s, p, if (clickedSelected) id else null)
+                    if (hit.kind == HitKind.Vertex && id in s.selection) {
+                        startMove(s, p, if (clickedSelected) id else null)
+                        if (altClick) {
+                            drag?.propsId = id
+                            drag?.propsAt = e.point
+                        }
+                    }
                 }
                 HitKind.Empty -> {
                     if (!additive(e)) s.selection.clear()
@@ -1185,6 +1255,9 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                         it.start = p
                         it.additive = additive(e)
                         it.base = s.selection.toSet()
+                        it.area = area
+                        it.areaProps = altClick
+                        it.propsAt = e.point
                     }
                     editor.renderProps()
                 }
@@ -1230,12 +1303,12 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
                 DragKind.Connect -> {
                     d.cur = p
-                    d.hover = connectTargetAt(s, p, d.source!!)
-                    if (d.hover != null && s.index.vertex(d.hover) == null) d.hover = null
+                    // Only where the connection can end: elsewhere it follows the pointer, and dropping it there draws nothing.
+                    d.hover = connectTargetAt(s, p, d.source!!)?.takeIf { s.index.vertex(it) != null && s.canConnect(d.source!!, it) }
                 }
                 DragKind.Reconnect -> {
                     d.cur = p
-                    d.hover = reconnectTargetAt(s, p)
+                    d.hover = reconnectTargetAt(s, p)?.takeIf { s.canReconnect(d.transition!!, d.atSource, s.index.vertex(it)!!) }
                 }
                 DragKind.Waypoint -> {
                     val q = if (e.isAltDown) p else PointD(Geo.snap(p.x), Geo.snap(p.y))
@@ -1275,10 +1348,19 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
             when (d.kind) {
                 DragKind.Pan -> {
                     if (d.rightButton && !d.moved) showContextMenu(s, d.start, e.point)
+                    // A middle click (no drag) on an element opens its properties in a window, as Alt+click does.
+                    if (d.middleButton && !d.moved && tool == null) {
+                        s.reindex()
+                        val hit = hitTest(s, d.start)
+                        if (hit.kind == HitKind.Vertex || hit.kind == HitKind.Transition || hit.kind == HitKind.Label) editor.openPropertiesWindow(hit.id, e.point)
+                    }
                     repaint()
                 }
                 DragKind.Move -> {
-                    if (!d.moved) {
+                    if (!d.moved && d.propsId != null) {
+                        openPropertiesAfterClick(s, d.propsId!!, d.propsAt)
+                        repaint()
+                    } else if (!d.moved) {
                         if (d.clickedId != null) {
                             s.selection = linkedSetOf(d.clickedId!!)
                             editor.renderProps()
@@ -1293,7 +1375,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 DragKind.Label -> if (d.moved) s.commit() else repaint()
                 DragKind.Connect -> {
                     val target = connectTargetAt(s, toWorld(e.point), d.source!!)
-                    if (target != null) {
+                    if (target != null && s.canConnect(d.source!!, target)) {
                         val t = s.connect(d.source!!, target)
                         editor.renderProps()
                         if (t != null && d.source!!.type == VertexType.State) {
@@ -1305,13 +1387,29 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 }
                 DragKind.Reconnect -> {
                     val target = reconnectTargetAt(s, toWorld(e.point))?.let { s.index.vertex(it) }
-                    if (target != null) {
+                    if (target != null && s.canReconnect(d.transition!!, d.atSource, target)) {
                         s.reconnect(d.transition!!, d.atSource, target)
                         editor.renderProps()
                     }
                     repaint()
                 }
                 DragKind.Band -> {
+                    // A click in a composite state's area (no band drawn): the state, as a click on it.
+                    val area = d.area
+                    val still = d.cur.let { it == null || Geo.dist(it, d.start) * zoom < 3 }
+                    if (area != null && still && s.index.vertex(area) != null) {
+                        if (d.areaProps) {
+                            editor.openPropertiesWindow(area, d.propsAt)
+                            repaint()
+                            return
+                        }
+                        val next = LinkedHashSet(d.base)
+                        s.selection = when {
+                            !d.additive -> linkedSetOf(area)
+                            !next.remove(area) -> next.apply { add(area) }
+                            else -> next
+                        }
+                    }
                     editor.renderProps()
                     repaint()
                 }
@@ -1411,8 +1509,14 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
      * A composite state moves by its title bar: its regions are empty canvas, for a selection band and for a
      * double-click adding a state.
      */
+    /** Is [p] inside one of composite state [v]'s regions, away from its contour? There, a press is on empty canvas. */
+    private fun inRegionArea(s: DiagramSession, v: Vertex, p: PointD): Boolean {
+        val m = CONTOUR_PX / zoom
+        return p.x > v.x + m && p.x < v.x + v.w - m && p.y < v.y + v.h - m && Geo.regionRects(s.model, v).any { it.rect.contains(p) }
+    }
+
     private fun inRegionAsEmpty(s: DiagramSession, hit: Hit, p: PointD): Hit =
-        if (hit.kind == HitKind.Vertex && Geo.regionRects(s.model, s.index.vertex(hit.id)!!).any { it.rect.contains(p) }) Hit(HitKind.Empty) else hit
+        if (hit.kind == HitKind.Vertex && inRegionArea(s, s.index.vertex(hit.id)!!, p)) Hit(HitKind.Empty) else hit
 
     /** Ends the drag without committing it: what it changed goes back to how it was when it started. */
     private fun cancelDrag(s: DiagramSession) {
@@ -1446,9 +1550,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 editor.renderProps()
             }
             HitKind.Vertex -> {
-                val v = s.index.vertex(hit.id)!!
-                if (v.type == VertexType.State && v.submachine.isNotEmpty() && e.isAltDown) editor.openSubmachine(v.submachine)
-                else editor.startInlineEdit(v.id)
+                editor.startInlineEdit(hit.id)
             }
             HitKind.Empty -> create("state", p)
             HitKind.Handle, HitKind.End -> return false
@@ -1578,6 +1680,12 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     }
 
     companion object {
+        /** Width of a composite state's contour, in screen pixels: a press there takes the state, as its title bar does. */
+        const val CONTOUR_PX = 6.0
+
+        /** Longest time between the two clicks of a double-click, in ms (the reference's). */
+        const val DOUBLE_CLICK_MS = 500
+
         init {
             // Set once, to a function of no canvas: a reference to a canvas would keep its closed editor alive.
             Geo.textMeasure = ::measureLabel

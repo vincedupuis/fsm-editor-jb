@@ -4,20 +4,20 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * The session doesn't offer what the file can't hold: the kinds and menu items it leaves out, and the edits it
- * refuses with a message, so that the writer never has to leave something out (as the VS Code edition's
- * webviewLossless tests). The properties panel shows a transition's kind, triggers, guard and conditions unless
- * [DiagramSession.isStart] holds for its source.
+ * The session doesn't offer what the file can't hold, so that the writer never has to leave something out (as the
+ * VS Code edition's webviewLossless tests): the canvas and the properties panel ask it what to offer
+ * ([DiagramSession.isStart] for a transition's kind, triggers, guard and conditions, the ⊕ handle, connection and
+ * reconnection targets, Reverse, kinds, submachines, drop targets, Leave Parent), and its operations refuse the rest.
  */
 class LosslessTest {
     private companion object {
         const val INITIAL_ONLY = "A transition leaving an initial pseudostate holds its target and an action only."
         const val HISTORY_ONLY = "A transition leaving a history pseudostate holds its target and an action only."
         const val ANCHOR = "A comment cannot be attached to an initial pseudostate or to its transition."
-        const val SECOND_INITIAL = "This region already has an initial pseudostate."
 
         /**
          * A (A → C on go, A → choice on pick), C (composite: its initial → C1, a history without a transition,
@@ -95,6 +95,32 @@ class LosslessTest {
     }
 
     @Test
+    fun movesTheTransitionOfAnInitialPseudostateWhenItIsDrawnAgainAndDoesntReverseIt() {
+        val f = Fixture(SAMPLE)
+        val init = f.topInitial
+        val t = f.leaving(init)[0]
+        assertTrue(f.s.canStartFrom(init))
+        // Drawn again to the same state: nothing, and no message.
+        assertTrue(f.s.canConnect(init, f.named("A").id))
+        assertSame(t, f.s.connect(init, f.named("A").id))
+        assertEquals(0, f.commits)
+        // To C: its one transition goes there.
+        assertTrue(f.s.canConnect(init, f.named("C").id))
+        assertSame(t, f.s.connect(init, f.named("C").id))
+        assertEquals(f.named("C").id, t.target)
+        assertEquals(1, f.leaving(init).size)
+        assertEquals(1, f.commits)
+        assertTrue(f.messages.isEmpty())
+        TestFiles.write(f.m)
+        assertFalse(f.s.canReverse(f.leaving(init)[0]))
+        assertTrue(f.s.canReverse(f.leaving(f.named("A"))[0]))
+        assertFalse(f.s.canConnect(f.named("note*"), init.id))
+        assertFalse(f.s.canConnect(f.named("note*"), f.leaving(init)[0].id))
+        assertTrue(f.s.canConnect(f.named("note*"), f.named("A").id))
+        assertFalse(f.s.canConnect(f.named("A"), init.id))
+    }
+
+    @Test
     fun refusesToAttachACommentToAnInitialPseudostateOrItsTransition() {
         val f = Fixture(SAMPLE)
         val note = f.named("note*")
@@ -117,9 +143,11 @@ class LosslessTest {
         val init = f.topInitial
         init.x = region.x + region.w - 60
         init.y = region.y + region.h - 60
-        f.s.dropMoved(listOf(init), setOf(init.id))
+        val moving = setOf(init.id)
+        assertNull(f.s.dropHighlight(init, moving)) // not C's region
+        f.s.dropMoved(listOf(init), moving)
         assertEquals(f.s.rootRegion, init.parent)
-        assertEquals(listOf(SECOND_INITIAL), f.messages)
+        assertTrue(f.messages.isEmpty())
         TestFiles.write(f.m)
     }
 
@@ -141,7 +169,7 @@ class LosslessTest {
         val count = f.m.vertices.size
         f.s.paste(data)
         assertEquals(count, f.m.vertices.size)
-        assertEquals(listOf(SECOND_INITIAL), f.messages)
+        assertTrue(f.messages.isEmpty())
         assertEquals(0, f.commits)
         // With a state: the state is pasted, the initial pseudostate and its transition are left out.
         f.s.selection = linkedSetOf(f.topInitial.id, f.named("A").id)
@@ -160,6 +188,10 @@ class LosslessTest {
               { "name": "P", "type": "state", "submachine": "Payment.fsm", "points": [ { "name": "retry", "type": "entryPoint" } ] } ] }
             """.trimIndent(),
         )
+        assertFalse(f.s.canBeSubmachine(f.named("S")))
+        assertFalse(f.s.canBePlain(f.named("P")))
+        assertTrue(f.s.canBeSubmachine(f.named("P")))
+        assertTrue(f.s.canBePlain(f.named("S")))
         assertFalse(f.s.setSubmachine(f.named("S"), "Payment.fsm"))
         assertFalse(f.s.setSubmachine(f.named("P"), ""))
         assertEquals("", f.named("S").submachine)
@@ -175,11 +207,14 @@ class LosslessTest {
         val c1 = f.named("C1")
         val history = f.of(VertexType.ShallowHistory)
         val (back, tick) = f.leaving(c1)
+        assertFalse(f.s.canReconnect(tick, true, history))
+        assertTrue(f.s.canReconnect(tick, false, f.named("C")))
+        assertFalse(f.s.canReverse(back))
         f.s.reconnect(tick, true, history)
         assertEquals(c1.id, tick.source)
         f.s.reverse(back)
         assertEquals(c1.id, back.source)
-        assertEquals(listOf(HISTORY_ONLY, "This transition cannot be reversed."), f.messages)
+        assertEquals(listOf(HISTORY_ONLY), f.messages)
         assertEquals(0, f.commits)
     }
 }

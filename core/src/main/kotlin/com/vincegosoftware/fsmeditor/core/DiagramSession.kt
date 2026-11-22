@@ -378,6 +378,12 @@ class DiagramSession(model: FsmModel) {
             commit()
             return null
         }
+        // An initial or history pseudostate has one transition: drawn again, it moves to the new target (to the same one, nothing changes).
+        startTransition(source)?.let { existing ->
+            selection = linkedSetOf(existing.id)
+            if (existing.target != target.id) reconnect(existing, false, target)
+            return existing
+        }
         connectProblem(source, target)?.let {
             say(it)
             return null
@@ -397,6 +403,46 @@ class DiagramSession(model: FsmModel) {
     }
 
     private fun anchored(id: String) = model.vertices.any { it.type == VertexType.Comment && id in it.anchors }
+
+    /** Can a transition be drawn from [v] (its ⊕ handle, the transition tool)? Not from a final state, a terminate or an entry reference. */
+    fun canStartFrom(v: Vertex): Boolean =
+        !(v.type == VertexType.Final || v.type == VertexType.Terminate || (v.type == VertexType.ConnectionPointRef && v.pointKind == PointKind.Entry))
+
+    /** The one transition of an initial or history pseudostate, which drawing from it again moves to the new target. */
+    private fun startTransition(v: Vertex): Transition? = if (isStart(v)) model.transitions.firstOrNull { it.source == v.id } else null
+
+    /** Can a connection drawn from [source] end on element [id] (a vertex, or a transition for a comment's anchor)? */
+    fun canConnect(source: Vertex, id: String): Boolean {
+        if (source.type == VertexType.Comment) {
+            return id != source.id && (index.vertex(id) != null || index.transition(id) != null) && anchorProblem(id) == null
+        }
+        val target = index.vertex(id) ?: return false
+        if (target.type == VertexType.Comment) return anchorProblem(source.id) == null
+        startTransition(source)?.let { return canReconnect(it, false, target) }
+        return connectProblem(source, target) == null
+    }
+
+    /** Can the source ([atSource]) or the target of [t] move to [v]? */
+    fun canReconnect(t: Transition, atSource: Boolean, v: Vertex): Boolean {
+        if ((if (atSource) t.source else t.target) == v.id) return true
+        val source = if (atSource) v else index.vertex(t.source) ?: return false
+        val target = if (atSource) index.vertex(t.target) ?: return false else v
+        return transitionProblem(t, source, target) == null
+    }
+
+    /** Can [t] be reversed (its target becomes its source)? */
+    fun canReverse(t: Transition): Boolean {
+        val s = index.vertex(t.source) ?: return false
+        val g = index.vertex(t.target) ?: return false
+        return transitionProblem(t, g, s) == null
+    }
+
+    /** Can state [v] become a submachine state? Not with regions or entry and exit points of its own. */
+    fun canBeSubmachine(v: Vertex): Boolean =
+        v.regions.isEmpty() && model.vertices.filter { it.parent == v.id }.all { it.type == VertexType.ConnectionPointRef }
+
+    /** Can submachine state [v] stop being one? Not with connection point references. */
+    fun canBePlain(v: Vertex): Boolean = model.vertices.none { it.parent == v.id && it.type == VertexType.ConnectionPointRef }
 
     /**
      * Why transition [t] can't go from [source] to [target] (reconnected or reversed), or null when it can: as drawing it
@@ -543,11 +589,8 @@ class DiagramSession(model: FsmModel) {
     fun reverse(t: Transition) {
         val s = index.vertex(t.source)
         val g = index.vertex(t.target)
-        // Reversed, the target becomes the source: refused as drawing it that way would be.
-        if (g == null || s == null || transitionProblem(t, g, s) != null) {
-            say("This transition cannot be reversed.")
-            return
-        }
+        // Reversed, the target becomes the source: offered (canReverse) when it could be drawn that way.
+        if (g == null || s == null || transitionProblem(t, g, s) != null) return
         val source = t.source
         t.source = t.target
         t.target = source
@@ -1067,7 +1110,10 @@ class DiagramSession(model: FsmModel) {
 
     /** Region to highlight while [lead] is dragged: where it would be dropped, else its own region. */
     fun dropHighlight(lead: Vertex, moving: Set<String>): RegionRect? =
-        dropRegionOf(dropBox(lead), lead.parent, moving) ?: regionOwnerOf(lead.parent)?.let { s -> rectsOf(s).firstOrNull { it.id == lead.parent } }
+        // A region that would get a second initial or history pseudostate isn't offered.
+        dropRegionOf(dropBox(lead), lead.parent, moving)
+            ?.takeIf { regionProblem(if (lead.group.isNotEmpty()) groupMembers(lead.group) else listOf(lead), it.id) == null }
+            ?: regionOwnerOf(lead.parent)?.let { s -> rectsOf(s).firstOrNull { it.id == lead.parent } }
 
     /**
      * Switches [s] between stacked and side-by-side regions: they share it equally again, any region too small
@@ -1206,9 +1252,7 @@ class DiagramSession(model: FsmModel) {
                 // A group drops as a whole: into the region that holds all its members, or nowhere.
                 if (v !== roots.first { it.group == v.group }) continue
                 val gr = dropRegionOf(dropBox(v), v.parent, moving)
-                val groupProblem = gr?.let { regionProblem(groupMembers(v.group), it.id) }
-                if (groupProblem != null) say(groupProblem)
-                else if (gr != null) for (m in groupMembers(v.group)) m.parent = gr.id
+                if (gr != null && regionProblem(groupMembers(v.group), gr.id) == null) for (m in groupMembers(v.group)) m.parent = gr.id
                 continue
             }
             if (v.type == VertexType.EntryPoint || v.type == VertexType.ExitPoint) {
@@ -1223,9 +1267,7 @@ class DiagramSession(model: FsmModel) {
                 continue
             }
             val r = dropRegionOf(v, moving)
-            val problem = r?.let { regionProblem(listOf(v), it.id) }
-            if (problem != null) say(problem)
-            else if (r != null) v.parent = r.id
+            if (r != null && regionProblem(listOf(v), r.id) == null) v.parent = r.id
         }
         commit()
     }
@@ -1369,9 +1411,7 @@ class DiagramSession(model: FsmModel) {
                 v.parent = rootRegion
             }
             // A region has one initial, one shallow and one deep history pseudostate at most: a copy that would be a second is left out.
-            val problem = if (parent == null) regionProblem(listOf(v), v.parent) else null
-            if (problem != null) {
-                say(problem)
+            if (parent == null && regionProblem(listOf(v), v.parent) != null) {
                 map.remove(src.id)
                 continue
             }
