@@ -67,4 +67,12 @@ class CommonTest {
         assertFalse(Expressions.checkGuard("else", false).ok)
         assertEquals(listOf("go", "after(2s)"), Expressions.checkList("go, after( 2 s )", Expressions::checkTrigger).value)
     }
+
+    @Test
+    fun `finds a class's jar from its class file`() {
+        // The IDE's class loaders give no code source: the bundled sidecar is found from the class file's URL.
+        val jar = Common.jarOf(Unit::class.java)
+        assertTrue(jar != null && jar.isFile && jar.name.endsWith(".jar"), "$jar")
+        assertEquals(null, Common.jarOf(CommonTest::class.java))
+    }
 }

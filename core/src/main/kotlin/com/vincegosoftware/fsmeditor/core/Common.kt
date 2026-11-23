@@ -78,9 +78,22 @@ object Common {
     private val exe: String get() = if (platform.startsWith("windows")) "fsm-editor-common.exe" else "fsm-editor-common"
 
     /** The sidecar bundled with the plugin: `cli/<platform>/` beside the `lib/` folder holding this class's jar. */
-    private fun bundled(): String? {
-        val jar = runCatching { File(Common::class.java.protectionDomain.codeSource.location.toURI()) }.getOrNull() ?: return null
+    fun bundled(): String? {
+        val jar = jarOf(Common::class.java) ?: return null
         return File(jar.parentFile?.parentFile, "cli/$platform/$exe").takeIf { it.isFile }?.path
+    }
+
+    /**
+     * The jar holding [type], from its class file's URL (`jar:file:/…/lib/core.jar!/…`), as IntelliJ's
+     * `PathManager.getJarPathForClass` finds it: the IDE's class loaders give classes no code source.
+     */
+    internal fun jarOf(type: Class<*>): File? {
+        val url = type.getResource(type.simpleName + ".class")?.toString() ?: return null
+        if (!url.startsWith("jar:file:")) return null
+        val path = url.removePrefix("jar:").substringBefore("!/")
+        // A URL that isn't a valid URI (spaces left as they are): its path as written, `/C:/…` as `C:/…`.
+        return runCatching { File(java.net.URI(path)) }.getOrNull()
+            ?: File(path.removePrefix("file:").replace(Regex("^/+(?=[A-Za-z]:)"), "").replace("%20", " "))
     }
 
     private fun start() {

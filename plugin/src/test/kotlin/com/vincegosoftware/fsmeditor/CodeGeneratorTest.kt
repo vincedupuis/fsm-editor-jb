@@ -2,6 +2,7 @@ package com.vincegosoftware.fsmeditor
 
 import com.intellij.openapi.util.io.FileUtil
 import com.vincegosoftware.fsmeditor.codegen.CodeGenerator
+import com.vincegosoftware.fsmeditor.core.Common
 import com.vincegosoftware.fsmeditor.core.Severity
 import junit.framework.TestCase
 import org.junit.Assume
@@ -40,6 +41,13 @@ class CodeGeneratorTest : TestCase() {
         assertEquals(1, failed.exitCode)
         assertTrue(failed.issues.joinToString { "${it.file}:${it.line}: ${it.message}" }, failed.issues.any { it.severity == Severity.Error && File(it.file) == broken && it.line > 0 })
         assertTrue(failed.error ?: "", failed.error!!.contains("nothing was generated"))
+    }
+
+    /** The sidecar the plugin bundles is found beside its jars, in the IDE's class loaders (no `fsm.common` needed). */
+    fun testFindsTheBundledSidecar() {
+        Assume.assumeTrue("scripts/fetch-common.sh was not run", System.getProperty("fsm.common") != null)
+        val sidecar = Common.bundled()
+        assertTrue("$sidecar", sidecar != null && File(sidecar).isFile)
     }
 
     /** A template of the workspace: it sees the submachine. */
