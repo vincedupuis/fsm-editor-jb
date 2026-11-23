@@ -38,6 +38,7 @@
         <fileType name="JSON" patterns="*.fsm.layout"/>
         <lang.parserDefinition language="FSM" implementationClass="com.vincegosoftware.fsmeditor.FsmParserDefinition"/>
         <fileEditorProvider implementation="com.vincegosoftware.fsmeditor.editor.FsmEditorProvider"/>
+        <postStartupActivity implementation="com.vincegosoftware.fsmeditor.services.CommonStarter"/>
         <standardResourceProvider implementation="com.vincegosoftware.fsmeditor.services.FsmResources"/>
         <externalAnnotator language="JSON" implementationClass="com.vincegosoftware.fsmeditor.services.FsmAnnotator"/>
         <externalAnnotator language="XML" implementationClass="com.vincegosoftware.fsmeditor.services.FsmAnnotator"/>

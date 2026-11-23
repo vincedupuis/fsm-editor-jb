@@ -69,6 +69,13 @@ class CommonTest {
     }
 
     @Test
+    fun `starts the sidecar ahead of the first request`() {
+        Common.ensureStarted()
+        Common.ensureStarted()
+        assertTrue(Expressions.checkGuard("a()", false).ok)
+    }
+
+    @Test
     fun `finds a class's jar from its class file`() {
         // The IDE's class loaders give no code source: the bundled sidecar is found from the class file's URL.
         val jar = Common.jarOf(Unit::class.java)

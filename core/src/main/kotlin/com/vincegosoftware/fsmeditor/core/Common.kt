@@ -55,6 +55,19 @@ object Common {
         null
     }
 
+    /**
+     * Starts the sidecar now if it isn't running, so that the first request doesn't wait for it: starting a process can
+     * take seconds on Windows (an antivirus scanning it, the IDE starting). Called from a background thread when a
+     * project opens; a failure is left to the first request to report.
+     */
+    fun ensureStarted() = synchronized(lock) {
+        try {
+            start()
+        } catch (_: IOException) {
+            stop()
+        }
+    }
+
     /** Arguments as a JSON object: values are JSON texts already (see [str]). */
     fun args(vararg fields: Pair<String, String>): String =
         fields.joinToString(",", "{", "}") { (k, v) -> PlainJson.quote(k) + ":" + v }
