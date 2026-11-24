@@ -252,7 +252,10 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
     fun anchorLines(ix: ModelIndex, comment: Vertex): List<Pair<PointD, PointD>> {
         val output = ArrayList<Pair<PointD, PointD>>()
         for (a in comment.anchors) {
-            val target = ix.vertex(a)
+            // An internal transition drawn in its state's compartment: the line goes to the state.
+            val target = ix.vertex(a) ?: ix.transition(a)
+                ?.takeIf { it.kind == TransitionKind.Internal && it.source == it.target }
+                ?.let { ix.vertex(it.source) }?.takeIf { it.type == VertexType.State }
             var p: PointD? = null
             if (target != null) {
                 p = target.center
