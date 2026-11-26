@@ -57,7 +57,9 @@ object Labels {
         val label = text ?: ""
         if (model.kind == MachineKind.Protocol) {
             val m = PROTOCOL_LABEL.find(label) ?: return "Write the label as [precondition] event / [postcondition]."
-            val pre = Expressions.checkCondition(m.groups[1]?.value ?: "")
+            // A protocol transition's precondition is its guard: `else` on a choice's or junction's branch.
+            val preText = m.groups[1]?.value ?: ""
+            val pre = if (allowsElse(source)) Expressions.checkGuard(preText, true) else Expressions.checkCondition(preText)
             if (!pre.ok) return "Precondition: ${pre.error}"
             val ptrig = Expressions.checkList(m.groups[2]?.value ?: "", Expressions::checkTrigger)
             if (!ptrig.ok) return "Trigger: ${ptrig.error}"
@@ -66,6 +68,10 @@ object Labels {
             if (source != null && DiagramSession.isStart(source) && (pre.value.isNotEmpty() || ptrig.value.isNotEmpty() || post.value.isNotEmpty())) {
                 return DiagramSession.startOnly(source)
             }
+            val target = model.vertices.firstOrNull { it.id == t.target }
+            if (ptrig.value.isNotEmpty() && !DiagramSession.takesTriggers(source, target)) return DiagramSession.NO_TRIGGERS
+            if (pre.value.isNotEmpty() && !DiagramSession.takesGuard(source, target)) return DiagramSession.noGuard(model)
+            if (pre.value == "else" && DiagramSession.elseTaken(model, source, t)) return DiagramSession.elseTakenMessage(source!!)
             t.precondition = pre.value
             t.triggers = ptrig.value.toMutableList()
             t.postcondition = post.value
@@ -81,6 +87,10 @@ object Labels {
         val action = Expressions.checkActions(if (slash >= 0) label.substring(slash + 1) else "")
         if (!action.ok) return "Action: ${action.error}"
         if (source != null && DiagramSession.isStart(source) && (trig.value.isNotEmpty() || guard.value.isNotEmpty())) return DiagramSession.startOnly(source)
+        val target = model.vertices.firstOrNull { it.id == t.target }
+        if (trig.value.isNotEmpty() && !DiagramSession.takesTriggers(source, target)) return DiagramSession.NO_TRIGGERS
+        if (guard.value.isNotEmpty() && !DiagramSession.takesGuard(source, target)) return DiagramSession.noGuard(model)
+        if (guard.value == "else" && DiagramSession.elseTaken(model, source, t)) return DiagramSession.elseTakenMessage(source!!)
         t.triggers = trig.value.toMutableList()
         t.guard = guard.value
         t.action = action.value

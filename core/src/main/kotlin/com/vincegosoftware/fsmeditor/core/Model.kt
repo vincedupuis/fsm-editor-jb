@@ -284,6 +284,7 @@ class FsmModel {
     var id: String = "sm"
     var name: String = ""
     var kind: MachineKind = MachineKind.Behavioral
+    /** The name of the classifier the machine belongs to. */
     var context: String = ""
     var documentation: String = ""
     var regions: MutableList<Region> = mutableListOf()
@@ -294,6 +295,7 @@ class FsmModel {
         val m = FsmModel()
         m.name = name
         m.kind = kind
+        m.context = context
         m.documentation = documentation
         m.regions = regions.mapTo(mutableListOf()) { it.copy() }
         m.vertices = vertices.mapTo(mutableListOf()) { it.copy() }
@@ -354,9 +356,10 @@ class FsmModel {
     }
 
     companion object {
-        fun createDefault(name: String = "StateMachine"): FsmModel {
+        fun createDefault(name: String = "StateMachine", kind: MachineKind = MachineKind.Behavioral): FsmModel {
             val m = FsmModel()
             m.name = name
+            m.kind = kind
             m.regions.add(Region("r_root"))
             m.vertices.add(Vertex("v_init", VertexType.Initial, "", "r_root", 60.0, 80.0, 20.0, 20.0))
             m.vertices.add(Vertex("v_idle", VertexType.State, if (name == "Idle") "Idle1" else "Idle", "r_root", 160.0, 60.0, 140.0, 60.0))

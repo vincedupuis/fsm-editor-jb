@@ -15,6 +15,7 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TestDialogManager
+import com.intellij.openapi.ui.TestDialog
 import com.intellij.openapi.ui.TestInputDialog
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -27,6 +28,7 @@ import com.intellij.testFramework.replaceService
 import com.intellij.testFramework.TestActionEvent
 import com.intellij.util.ui.UIUtil
 import com.vincegosoftware.fsmeditor.core.FsmModel
+import com.vincegosoftware.fsmeditor.core.MachineKind
 import com.vincegosoftware.fsmeditor.core.MachineFiles
 import com.vincegosoftware.fsmeditor.editor.FsmFileEditor
 import java.awt.Component
@@ -152,15 +154,18 @@ class IdeEditorsTest : FileEditorManagerTestCase() {
     fun testNewStateMachineOpensTheTemplateInTheDiagram() {
         val folder = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(dir)!!
         val before = TestDialogManager.setTestInputDialog(TestInputDialog { "Machine" })
+        // The kind asked first: Protocol State Machine (the second answer).
+        val beforeKind = TestDialogManager.setTestDialog(TestDialog { 1 })
         try {
             // File › New › State Machine (the NewGroup's action), on the selected folder.
             perform("FsmEditor.NewStateMachine", context(CommonDataKeys.VIRTUAL_FILE to folder))
         } finally {
             TestDialogManager.setTestInputDialog(before)
+            TestDialogManager.setTestDialog(beforeKind)
         }
         val created = folder.findChild("Machine.fsm")
         assertNotNull(created)
-        val template = MachineFiles.write(FsmModel.createDefault("Machine"))
+        val template = MachineFiles.write(FsmModel.createDefault("Machine", MachineKind.Protocol))
         assertEquals(template.modelText, VfsUtilCore.loadText(created!!))
         assertEquals(template.layoutText, folder.findChild("Machine.fsm.layout")?.let { VfsUtilCore.loadText(it) })
         val editor = selected(created)

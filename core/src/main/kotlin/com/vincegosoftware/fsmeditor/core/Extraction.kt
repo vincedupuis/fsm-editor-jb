@@ -257,7 +257,8 @@ object Extraction {
                 val refId = entryRefFor.getOrPut(t.target) {
                     val entry = newPoint(fresh(machineIds, "v"), VertexType.EntryPoint, pointName("to" + targetName(ix.vertex(t.target))), region.id)
                     entries.add(entry)
-                    machineTransitions.add(plain(fresh(machineIds, "t"), entry.id, t.target))
+                    // UML: a transition leaving an entry point is local.
+                    machineTransitions.add(plain(fresh(machineIds, "t"), entry.id, t.target, TransitionKind.Local))
                     val r = reference(fresh(parentIds, "v"), state.id, entry.id, PointKind.Entry)
                     entryRefs.add(r)
                     r.id
@@ -355,7 +356,7 @@ object Extraction {
         return v
     }
 
-    private fun plain(id: String, source: String, target: String) = Transition(id, source, target)
+    private fun plain(id: String, source: String, target: String, kind: TransitionKind = TransitionKind.External) = Transition(id, source, target, kind)
 
     private fun unionBox(vs: List<Vertex>): RectD {
         val x = vs.minOf { it.x }

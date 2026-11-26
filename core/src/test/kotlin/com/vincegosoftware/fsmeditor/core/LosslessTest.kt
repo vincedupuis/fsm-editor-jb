@@ -17,7 +17,6 @@ class LosslessTest {
     private companion object {
         const val INITIAL_ONLY = "A transition leaving an initial pseudostate holds its target and an action only."
         const val HISTORY_ONLY = "A transition leaving a history pseudostate holds its target and an action only."
-        const val ANCHOR = "A comment cannot be attached to an initial pseudostate or to its transition."
 
         /**
          * A (A → C on go, A → choice on pick), C (composite: its initial → C1, a history without a transition,
@@ -95,6 +94,130 @@ class LosslessTest {
     }
 
     @Test
+    fun offersATransitionLeavingAPseudostateNoTriggersAndNoOtherKind() {
+        val f = Fixture(SAMPLE)
+        val branch = f.leaving(f.of(VertexType.Choice))[0]
+        assertFalse(DiagramSession.takesTriggers(f.of(VertexType.Choice), f.named("A")))
+        assertTrue(DiagramSession.takesTriggers(f.named("A"), f.named("C")))
+        assertEquals(listOf(TransitionKind.External), f.s.kindOptions(branch))
+        assertEquals(DiagramSession.NO_TRIGGERS, f.s.applyLabel(branch, "go [ok()]"))
+        assertNull(f.s.applyLabel(branch, "[ready()]"))
+        // A, simple: internal, not local; C, composite, to C1 inside it: local too.
+        assertEquals(listOf(TransitionKind.External, TransitionKind.Internal), f.s.kindOptions(f.leaving(f.named("A"))[0]))
+        val inside = Transition(id = "t_in", source = f.named("C").id, target = f.named("C1").id)
+        f.m.transitions.add(inside)
+        assertEquals(listOf(TransitionKind.External, TransitionKind.Local, TransitionKind.Internal), f.s.kindOptions(inside))
+    }
+
+    /** A → fork → X, Y (the regions of C, X2 beside X); X, Y → join → A; C's entry point in → X; a choice → A. */
+    private fun segments(type: String) = """
+        { "version": 1, "name": "S", "type": "$type",
+          "initial": { "target": "A" },
+          "elements": [
+            { "name": "A", "type": "state", "transitions": [ { "type": "external", "target": "f*" } ] },
+            { "name": "f*", "type": "fork", "transitions": [ { "type": "external", "target": "X" }, { "type": "external", "target": "Y" } ] },
+            { "name": "C", "type": "state", "points": [ { "name": "in", "type": "entryPoint", "transitions": [ { "type": "local", "target": "X" } ] } ],
+              "regions": [
+                { "name": "r1", "elements": [ { "name": "X", "type": "state", "transitions": [ { "type": "external", "target": "j*" } ] }, { "name": "X2", "type": "state" } ] },
+                { "name": "r2", "elements": [ { "name": "Y", "type": "state", "transitions": [ { "type": "external", "target": "j*" } ] } ] } ] },
+            { "name": "j*", "type": "join", "transitions": [ { "type": "external", "target": "A" } ] },
+            { "name": "ch*", "type": "choice", "transitions": [ { "type": "external", "target": "A" } ] }
+          ] }
+    """.trimIndent()
+
+    @Test
+    fun offersNoGuardOrTriggersOnAForkAnEntryPointOrAJoinAndDrawsNoneTheyCantHave() {
+        for (type in listOf("behavioral", "protocol")) {
+            val f = Fixture(segments(type))
+            fun v(id: String) = f.m.vertices.single { it.id == id }
+            fun t(id: String) = f.m.transitions.single { it.id == id }
+            assertFalse(DiagramSession.takesGuard(v("f*"), v("X")))
+            assertFalse(DiagramSession.takesGuard(v("C.in"), v("X")))
+            assertFalse(DiagramSession.takesGuard(v("X"), v("j*")))
+            assertFalse(DiagramSession.takesTriggers(v("X"), v("j*")))
+            assertTrue(DiagramSession.takesGuard(v("ch*"), v("A")))
+            val guard = if (type == "protocol") "precondition" else "guard"
+            assertEquals("A transition leaving a fork or an entry point, or entering a join, cannot have a $guard.", f.s.applyLabel(t("X#1"), "[ok()]"))
+            assertEquals(DiagramSession.NO_TRIGGERS, f.s.applyLabel(t("X#1"), "go"))
+            // Drawn: a fork to a choice, a choice to a join, a second transition from the entry point into r1.
+            assertFalse(f.s.canConnect(v("f*"), "ch*"))
+            assertFalse(f.s.canConnect(v("ch*"), "j*"))
+            assertFalse(f.s.canConnect(v("C.in"), "X2"))
+            assertTrue(f.s.canConnect(v("C.in"), "Y"))
+            assertEquals(0, f.commits)
+            // Drawn from an entry point: local, the only kind it can be (UML's state_is_external).
+            val drawn = f.s.connect(v("C.in"), "Y")!!
+            assertEquals(TransitionKind.Local, drawn.kind)
+            assertEquals(listOf(TransitionKind.Local), f.s.kindOptions(drawn))
+        }
+    }
+
+    @Test
+    fun drawsNoTransitionFromAnEntryPointOutOfItsStateFromAnExitPointIntoItOrFromTheMachinesExitPoint() {
+        // A (A → ch* on go), ch* ([else] → A), C (its points in and out, X inside), the machine's exit point stop.
+        val f = Fixture(
+            """
+            { "version": 1, "name": "M", "type": "behavioral",
+              "points": [ { "name": "stop", "type": "exitPoint" } ],
+              "initial": { "target": "A" },
+              "elements": [
+                { "name": "A", "type": "state", "transitions": [ { "type": "external", "trigger": "go", "target": "ch*" } ] },
+                { "name": "ch*", "type": "choice", "transitions": [ { "type": "external", "guard": "else", "target": "A" } ] },
+                { "name": "C", "type": "state", "points": [ { "name": "in", "type": "entryPoint" }, { "name": "out", "type": "exitPoint" } ],
+                  "elements": [ { "name": "X", "type": "state" } ] }
+              ] }
+            """.trimIndent(),
+        )
+        fun v(id: String) = f.m.vertices.single { it.id == id }
+        assertFalse(f.s.canConnect(v("C.in"), "A"))
+        assertTrue(f.s.canConnect(v("C.in"), "X"))
+        assertFalse(f.s.canConnect(v("C.out"), "X"))
+        assertTrue(f.s.canConnect(v("C.out"), "A"))
+        assertFalse(f.s.canStartFrom(v("M.stop")))
+        // The [else] branch can't be reversed: A would be its source.
+        assertFalse(f.s.canReverse(f.leaving(v("ch*"))[0]))
+        // The entry point swapped for an exit point: in and out then both leave C.
+        f.m.transitions.add(Transition(id = "t_in", source = "C.in", target = "X"))
+        assertFalse(VertexType.ExitPoint in f.s.typeOptions(v("C.in")))
+        assertEquals(0, f.commits)
+    }
+
+    @Test
+    fun offersAProtocolMachineNoHistoryAndElseOnlyOnABranchsPrecondition() {
+        // A protocol machine: A (A → choice on go), the choice ([ok()] → B, → A), B.
+        val f = Fixture(
+            """
+            { "version": 1, "name": "P", "type": "protocol", "context": "Door",
+              "initial": { "target": "A" },
+              "elements": [
+                { "name": "A", "type": "state", "transitions": [ { "type": "external", "trigger": "go", "target": "ch*" } ] },
+                { "name": "ch*", "type": "choice", "transitions": [
+                  { "type": "external", "precondition": "ok()", "target": "B" },
+                  { "type": "external", "target": "A" } ] },
+                { "name": "B", "type": "state" }
+              ] }
+            """.trimIndent(),
+        )
+        assertEquals("Door", f.m.context)
+        assertFalse(Tools.allowed(f.m, "shallowHistory"))
+        assertFalse(Tools.allowed(f.m, "deepHistory"))
+        assertTrue(Tools.allowed(f.m, "choice"))
+        assertNull(f.s.createVertex("shallowHistory", PointD(400.0, 300.0)))
+        assertEquals(listOf(VertexType.Choice, VertexType.Junction), f.s.typeOptions(f.of(VertexType.Choice)))
+        assertEquals(listOf(VertexType.Initial, VertexType.Choice, VertexType.Junction), f.s.typeOptions(f.topInitial))
+        assertTrue(f.s.applyLabel(f.leaving(f.named("A"))[0], "[else] go")!!.startsWith("Precondition:"))
+        val branch = f.leaving(f.of(VertexType.Choice))[1]
+        assertNull(f.s.applyLabel(branch, "[else]"))
+        assertEquals("else", branch.precondition)
+        assertTrue(TestFiles.write(f.m).model.contains("\"context\": \"Door\""))
+        f.m.kind = MachineKind.Behavioral
+        assertTrue(Tools.allowed(f.m, "shallowHistory"))
+        // A new machine of either kind.
+        assertTrue(TestFiles.write(FsmModel.createDefault("Door", MachineKind.Protocol)).model.contains("\"type\": \"protocol\""))
+        assertTrue(TestFiles.write(FsmModel.createDefault("Door")).model.contains("\"type\": \"behavioral\""))
+    }
+
+    @Test
     fun movesTheTransitionOfAnInitialPseudostateWhenItIsDrawnAgainAndDoesntReverseIt() {
         val f = Fixture(SAMPLE)
         val init = f.topInitial
@@ -114,22 +237,30 @@ class LosslessTest {
         TestFiles.write(f.m)
         assertFalse(f.s.canReverse(f.leaving(init)[0]))
         assertTrue(f.s.canReverse(f.leaving(f.named("A"))[0]))
-        assertFalse(f.s.canConnect(f.named("note*"), init.id))
-        assertFalse(f.s.canConnect(f.named("note*"), f.leaving(init)[0].id))
+        assertTrue(f.s.canConnect(f.named("note*"), init.id))
+        assertTrue(f.s.canConnect(f.named("note*"), f.leaving(init)[0].id))
         assertTrue(f.s.canConnect(f.named("note*"), f.named("A").id))
         assertFalse(f.s.canConnect(f.named("A"), init.id))
     }
 
     @Test
-    fun refusesToAttachACommentToAnInitialPseudostateOrItsTransition() {
+    fun attachesACommentToAnInitialPseudostateItsTransitionARegionAndTheMachine() {
         val f = Fixture(SAMPLE)
         val note = f.named("note*")
-        assertNull(f.s.connect(note, f.topInitial.id))
-        assertNull(f.s.connect(note, f.leaving(f.topInitial)[0].id))
-        assertNull(f.s.connect(f.topInitial, note.id))
-        assertEquals(listOf(ANCHOR, ANCHOR, ANCHOR), f.messages)
-        assertTrue(note.anchors.isEmpty())
-        assertEquals(0, f.commits)
+        val region = f.named("C").regions[0].id
+        assertTrue(f.s.canConnect(note, region))
+        assertTrue(f.s.canConnect(note, DiagramSession.MACHINE_ANCHOR))
+        f.s.connect(note, f.topInitial.id)
+        f.s.connect(note, f.leaving(f.topInitial)[0].id)
+        f.s.connect(note, region)
+        f.s.connect(note, DiagramSession.MACHINE_ANCHOR)
+        assertTrue(f.messages.isEmpty())
+        // C's region, unnamed, gets a generated name, which references it.
+        val model = TestFiles.write(f.m).model
+        assertTrue(model.contains("\"M.initial\","), model)
+        assertTrue(model.contains("{ \"source\": \"M.initial\", \"target\": \"A\" }"), model)
+        assertTrue(model.contains("\"region1*\","), model)
+        assertTrue(model.contains("\"M\"\n"), model)
     }
 
     @Test

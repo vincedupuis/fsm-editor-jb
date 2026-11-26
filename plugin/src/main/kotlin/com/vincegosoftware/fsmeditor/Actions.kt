@@ -23,6 +23,7 @@ import com.vincegosoftware.fsmeditor.core.FsmModel
 import com.vincegosoftware.fsmeditor.core.SvgExport
 import com.vincegosoftware.fsmeditor.core.Load
 import com.vincegosoftware.fsmeditor.core.LoadException
+import com.vincegosoftware.fsmeditor.core.MachineKind
 import com.vincegosoftware.fsmeditor.core.MachineFiles
 import com.vincegosoftware.fsmeditor.editor.DiagramDiffViewer
 import com.vincegosoftware.fsmeditor.editor.FsmFileEditor
@@ -151,15 +152,22 @@ class NewStateMachineAction : DumbAwareAction() {
                 ?: return
         }
         val target = folder
+        // The kind is chosen once: the diagram doesn't change it.
+        val kind = when (Messages.showDialog(project, "The kind of the new state machine:", "New State Machine",
+            arrayOf("Behavioral State Machine", "Protocol State Machine", Messages.getCancelButton()), 0, FsmIcons.FILE)) {
+            0 -> MachineKind.Behavioral
+            1 -> MachineKind.Protocol
+            else -> return
+        }
         val name = Messages.showInputDialog(project, "Name of the new state machine:", "New State Machine", FsmIcons.FILE, "StateMachine", MachineNameValidator(target))
             ?.trim() ?: return
-        create(project, target, name)?.let { FsmDocuments.openInDiagram(project, it) }
+        create(project, target, name, kind)?.let { FsmDocuments.openInDiagram(project, it) }
     }
 
-    private fun create(project: Project, folder: VirtualFile, name: String): VirtualFile? =
+    private fun create(project: Project, folder: VirtualFile, name: String, kind: MachineKind): VirtualFile? =
         try {
             WriteCommandAction.writeCommandAction(project).withName("New State Machine").compute<VirtualFile, IOException> {
-                val files = MachineFiles.write(FsmModel.createDefault(name))
+                val files = MachineFiles.write(FsmModel.createDefault(name, kind))
                 val file = folder.createChildData(this, "$name.fsm")
                 VfsUtil.saveText(file, files.modelText)
                 VfsUtil.saveText(folder.findChild("$name.fsm.layout") ?: folder.createChildData(this, "$name.fsm.layout"), files.layoutText ?: "")

@@ -223,6 +223,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     // ---------------------------------------------------------------- tools
 
     fun setTool(id: String?, sticky: Boolean = false) {
+        if (id != null && !Tools.allowed(s?.model, id)) return
         tool = if (id != null && tool == id && !sticky) null else id
         toolSticky = tool != null && sticky
         cursor = if (tool != null) Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR) else null
@@ -902,8 +903,17 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
     /** The element under the pointer to connect to: a vertex, or any element for a comment. */
     private fun connectTargetAt(s: DiagramSession, p: PointD, source: Vertex): String? {
         val hit = itemAt(s, p, true)
+        if (source.type == VertexType.Comment) {
+            // A comment's connection: an element or a transition, the region of a composite state around it, or the
+            // state machine on empty canvas.
+            val v = if (hit.kind == HitKind.Vertex) s.index.vertex(hit.id) else null
+            if (v != null && v.type == VertexType.State && v.regions.isNotEmpty() && inRegionArea(s, v, p)) {
+                return Geo.regionRects(s.model, v).firstOrNull { it.rect.contains(p) }?.id ?: hit.id
+            }
+            if (hit.kind == HitKind.Vertex || hit.kind == HitKind.Transition || hit.kind == HitKind.Label) return hit.id
+            return DiagramSession.MACHINE_ANCHOR
+        }
         if (hit.kind == HitKind.Vertex) return hit.id
-        if ((hit.kind == HitKind.Transition || hit.kind == HitKind.Label) && source.type == VertexType.Comment) return hit.id
         return null
     }
 
@@ -1304,7 +1314,7 @@ class DiagramCanvas(private val editor: EditorPanel) : JComponent(), UiDataProvi
                 DragKind.Connect -> {
                     d.cur = p
                     // Only where the connection can end: elsewhere it follows the pointer, and dropping it there draws nothing.
-                    d.hover = connectTargetAt(s, p, d.source!!)?.takeIf { s.index.vertex(it) != null && s.canConnect(d.source!!, it) }
+                    d.hover = connectTargetAt(s, p, d.source!!)?.takeIf { (s.index.vertex(it) != null || d.source!!.type == VertexType.Comment) && s.canConnect(d.source!!, it) }
                 }
                 DragKind.Reconnect -> {
                     d.cur = p

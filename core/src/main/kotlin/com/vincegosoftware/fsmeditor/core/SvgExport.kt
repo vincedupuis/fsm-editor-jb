@@ -249,11 +249,18 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f1f1
     }
 
     /** The dashed lines (from, to) linking a comment to the elements it annotates. */
+    /** The area of region [id] of a composite state, as a box to draw a comment's anchor to, or null (the machine's regions have none). */
+    private fun regionArea(ix: ModelIndex, id: String): Vertex? {
+        val owner = ix.regionOwner[id] ?: return null
+        val r = Geometry.regionRects(ix.model, owner).firstOrNull { it.id == id } ?: return null
+        return Vertex("", VertexType.State, "", "", r.rect.x, r.rect.y, r.rect.w, r.rect.h)
+    }
+
     fun anchorLines(ix: ModelIndex, comment: Vertex): List<Pair<PointD, PointD>> {
         val output = ArrayList<Pair<PointD, PointD>>()
         for (a in comment.anchors) {
-            // An internal transition drawn in its state's compartment: the line goes to the state.
-            val target = ix.vertex(a) ?: ix.transition(a)
+            // An internal transition drawn in its state's compartment: the line goes to the state; a region: to its area.
+            val target = ix.vertex(a) ?: regionArea(ix, a) ?: ix.transition(a)
                 ?.takeIf { it.kind == TransitionKind.Internal && it.source == it.target }
                 ?.let { ix.vertex(it.source) }?.takeIf { it.type == VertexType.State }
             var p: PointD? = null

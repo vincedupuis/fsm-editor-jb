@@ -8,7 +8,7 @@ package com.vincegosoftware.fsmeditor.core
 object ModelJson {
     fun write(m: FsmModel): String =
         ClipboardJson.JsonObjectWriter().num("version", 1.0).str("name", m.name)
-            .str("kind", if (m.kind == MachineKind.Protocol) "protocol" else "behavioral").str("documentation", m.documentation)
+            .str("kind", if (m.kind == MachineKind.Protocol) "protocol" else "behavioral").str("context", m.context).str("documentation", m.documentation)
             .raw("regions", "[" + m.regions.joinToString(",", transform = ::writeRegion) + "]")
             .raw("vertices", "[" + m.vertices.joinToString(",", transform = ClipboardJson::writeVertex) + "]")
             .raw("transitions", "[" + m.transitions.joinToString(",", transform = ClipboardJson::writeTransition) + "]")
@@ -23,6 +23,7 @@ object ModelJson {
         val m = FsmModel()
         m.name = str(o, "name")
         m.kind = if (str(o, "kind") == "protocol") MachineKind.Protocol else MachineKind.Behavioral
+        m.context = str(o, "context")
         m.documentation = str(o, "documentation")
         m.regions = objects(o, "regions").mapTo(mutableListOf(), ::readRegion)
         m.vertices = objects(o, "vertices").mapTo(mutableListOf(), ::readVertex)

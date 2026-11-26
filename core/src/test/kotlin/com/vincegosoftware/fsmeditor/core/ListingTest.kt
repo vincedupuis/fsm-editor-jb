@@ -48,7 +48,7 @@ class ListingTest {
     @Test
     fun theReadmeLinksResolve() {
         assertEquals(emptyList(), brokenLinks(File(root, "README.md")))
-        for (doc in listOf("docs/CODEGEN.md", "docs/UML-CONFORMANCE.md")) assertEquals(emptyList(), brokenLinks(File(root, doc)), doc)
+        for (doc in listOf("docs/CODEGEN.md", "docs/REFERENCE.md", "docs/UML-CONFORMANCE.md")) assertEquals(emptyList(), brokenLinks(File(root, doc)), doc)
     }
 
     /** GitHub's anchor of a heading: lowercase, punctuation dropped, spaces as hyphens. */

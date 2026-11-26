@@ -16,6 +16,7 @@ import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.vincegosoftware.fsmeditor.core.Check
+import com.vincegosoftware.fsmeditor.core.Region
 import com.vincegosoftware.fsmeditor.core.ConnectionPointInfo
 import com.vincegosoftware.fsmeditor.core.DiagramSession
 import com.vincegosoftware.fsmeditor.core.ElementColors
@@ -497,13 +498,15 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         put(
             h3("State Machine"),
             textField("Name", m.name, { m.name = it; commit() }, { s.nameCheck(m, it) }),
-            selectField(
-                "Kind", if (m.kind == MachineKind.Protocol) "protocol" else "behavioral",
-                listOf("behavioral" to "Behavioral state machine", "protocol" to "Protocol state machine"),
-            ) {
-                m.kind = if (it == "protocol") MachineKind.Protocol else MachineKind.Behavioral
-                commit(true)
-            },
+            // Chosen when the machine is created.
+            field("Kind", muted(if (m.kind == MachineKind.Protocol) "Protocol state machine" else "Behavioral state machine")),
+            textField("Context", m.context, { m.context = it; commit() }, Expressions::checkName, "e.g. DoorController"),
+        )
+        // The machine's region, when it has one: it can be named (several are named in the file only).
+        if (m.regions.size == 1) {
+            put(textField("Region", Format.shown(m.regions[0].name), { m.regions[0].name = it; commit() }, { s.nameCheck(m.regions[0], it) }, "no name"))
+        }
+        put(
             textField("Documentation", m.documentation, { m.documentation = it; commit() }, multiline = true, rows = 4),
         )
         issuesFor("")?.let { put(it) }
@@ -549,18 +552,33 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             VertexType.Comment -> {
                 put(textField("Text", v.text, { v.text = it; commit() }, multiline = true, rows = 5))
                 put(h4("Annotated elements"))
-                val anchors = v.anchors.mapNotNull { a -> ix.vertex(a) ?: ix.transition(a) }
+                val anchors = v.anchors.mapNotNull { a ->
+                    ix.vertex(a) ?: ix.transition(a) ?: (if (a == DiagramSession.MACHINE_ANCHOR) s.model else s.allRegions().firstOrNull { it.id == a })
+                }
                 if (anchors.isEmpty()) put(muted("Drag the ⊕ handle onto an element to attach this comment."))
                 for (a in anchors) {
-                    val id = if (a is Vertex) a.id else (a as Transition).id
-                    val text = if (a is Transition) "Transition ${Labels.transitionLabel(s.model, a)}" else Format.shown((a as Vertex).name).ifEmpty { a.type.title }
+                    val id = when (a) {
+                        is Vertex -> a.id
+                        is Transition -> a.id
+                        is Region -> a.id
+                        else -> DiagramSession.MACHINE_ANCHOR
+                    }
+                    val text = when (a) {
+                        is Transition -> "Transition ${Labels.transitionLabel(s.model, a)}"
+                        is Region -> "Region ${Format.shown(a.name).ifEmpty { "(unnamed)" }}"
+                        is Vertex -> Format.shown(a.name).ifEmpty { a.type.title }
+                        else -> "The state machine"
+                    }
                     put(row(JBLabel(text), iconButton("Detach") {
                         v.anchors.remove(id)
                         commit(true)
                     }))
                 }
             }
-            else -> put(textField("Name", Format.shown(v.name), { v.name = it; commit() }, { s.nameCheck(v, it) }, if (Format.isGenerated(v.name)) "none shown (a generated name)" else null))
+            // Initial and history pseudostates have no name in the file.
+            else -> if (!DiagramSession.isStart(v)) {
+                put(textField("Name", Format.shown(v.name), { v.name = it; commit() }, { s.nameCheck(v, it) }, if (Format.isGenerated(v.name)) "none shown (a generated name)" else null))
+            }
         }
         val what = if (v.type == VertexType.Comment) "the comment" else Format.shown(v.name).ifEmpty { "the element" }
         if (v.type == VertexType.State && v.regions.isNotEmpty()) {
@@ -585,9 +603,19 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         put(
             textField("Stereotype", v.stereotype, set { v.stereotype = it }, Expressions::checkName, "e.g. Critical"),
             h4("Behaviors"),
-            withColor(textField("entry /", v.entry, set { v.entry = it }, Expressions::checkActions, "e.g. start(); log()"), s, v, "entry", "entry"),
-            withColor(textField("exit /", v.exit, set { v.exit = it }, Expressions::checkActions, "e.g. stop()"), s, v, "exit", "exit"),
-            withColor(textField("do /", v.doActivity, set { v.doActivity = it }, Expressions::checkActions, "e.g. poll()"), s, v, "doActivity", "do"),
+        )
+        // A protocol state machine's states have no entry, exit or do behaviors (shown when they do, to remove them).
+        val behaviors = s.model.kind != MachineKind.Protocol
+        if (behaviors || v.entry.isNotEmpty()) {
+            put(withColor(textField("entry /", v.entry, set { v.entry = it }, Expressions::checkActions, "e.g. start(); log()"), s, v, "entry", "entry"))
+        }
+        if (behaviors || v.exit.isNotEmpty()) {
+            put(withColor(textField("exit /", v.exit, set { v.exit = it }, Expressions::checkActions, "e.g. stop()"), s, v, "exit", "exit"))
+        }
+        if (behaviors || v.doActivity.isNotEmpty()) {
+            put(withColor(textField("do /", v.doActivity, set { v.doActivity = it }, Expressions::checkActions, "e.g. poll()"), s, v, "doActivity", "do"))
+        }
+        put(
             withColor(
                 listField("Deferrable events", v.deferrable, { v.deferrable = it.toMutableList(); commit() }, Expressions::checkEvent, "evA, evB"),
                 s, v, "deferrable", "the deferrable events",
@@ -622,9 +650,8 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         } else {
             put(h4(if (v.regions.size > 1) "Orthogonal regions" else "Regions"))
             for ((i, region) in v.regions.withIndex()) {
-                val tb = input(Format.shown(region.name), placeholder = if (v.regions.size > 1) "Region ${i + 1}" else "no name (one region)")
+                val tb = input(Format.shown(region.name), placeholder = if (v.regions.size > 1) "Region ${i + 1}" else "no name")
                 // A single region has no name shown: named only beside others.
-                tb.isEnabled = v.regions.size > 1
                 var committed = tb.text
                 onCommit(tb, false) {
                     if (tb.text == committed) return@onCommit
@@ -779,9 +806,11 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         // Leaving an initial or history pseudostate: the file holds its target and action only.
         val start = DiagramSession.isStart(src)
         put(h3("Transition"), muted("${nm(src)} → ${nm(tgt)}"))
-        if (!start) {
+        // Only the kinds the transition can be, and triggers only where it can have them (or has them, to remove them).
+        val kinds = s.kindOptions(t)
+        if (!start && kinds.size > 1) {
             put(
-                selectField("Kind", t.kind.key, listOf("external" to "External", "local" to "Local", "internal" to "Internal")) {
+                selectField("Kind", t.kind.key, kinds.map { it.key to it.name }) {
                     s.setKind(t, if (it == "internal") TransitionKind.Internal else if (it == "local") TransitionKind.Local else TransitionKind.External)
                     editor.renderProps()
                 },
@@ -791,7 +820,7 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
         // Internal transitions drawn in their state's compartment take a single color.
         val inCompartment = t.kind == TransitionKind.Internal && t.source == t.target && src?.type == VertexType.State
         fun item(key: String) = if (inCompartment) null else key
-        if (!start) {
+        if (!start && (DiagramSession.takesTriggers(src, tgt) || t.triggers.isNotEmpty())) {
             put(
                 withColor(
                     listField("Triggers", t.triggers, { t.triggers = it.toMutableList(); commit() }, Expressions::checkTrigger, "event, after(500ms), after(2s)"),
@@ -800,25 +829,49 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
             )
         }
         if (s.model.kind == MachineKind.Protocol) {
-            if (!start) {
+            // A protocol transition's precondition is its guard: `else` on a choice's or junction's branch.
+            val branch = Labels.allowsElse(src)
+            if (DiagramSession.takesGuard(src, tgt) || t.precondition.isNotEmpty()) {
                 put(
                     withColor(
-                        textField("Precondition", t.precondition, { t.precondition = it; commit() }, Expressions::checkCondition, "e.g. isOpen()"),
+                        textField(
+                            "Precondition", t.precondition, { t.precondition = it; commit() },
+                            { text ->
+                                if (branch && text.trim() == "else" && DiagramSession.elseTaken(s.model, src, t)) Check.fail(DiagramSession.elseTakenMessage(src!!))
+                                else if (branch) Expressions.checkGuard(text, true) else Expressions.checkCondition(text)
+                            },
+                            if (branch) "e.g. isOpen(), or else" else "e.g. isOpen()",
+                        ),
                         s, t, item("precondition"), "the precondition",
                     ),
+                )
+            }
+            if (!start) {
+                put(
                     withColor(
                         textField("Postcondition", t.postcondition, { t.postcondition = it; commit() }, Expressions::checkCondition, "e.g. isClosed()"),
                         s, t, item("postcondition"), "the postcondition",
                     ),
                 )
             }
+            // A protocol transition has no guard or action: shown when it has one, to remove it.
+            if (t.guard.isNotEmpty()) {
+                put(withColor(textField("Guard", t.guard, { t.guard = it; commit() }, { Expressions.checkGuard(it, branch) }), s, t, item("guard"), "the guard"))
+            }
+            if (t.action.isNotEmpty()) {
+                put(withColor(textField("Action", t.action, { t.action = it; commit() }, Expressions::checkActions), s, t, item("action"), "the action"))
+            }
         } else {
             val allowElse = Labels.allowsElse(src)
-            if (!start) {
+            if (DiagramSession.takesGuard(src, tgt) || t.guard.isNotEmpty()) {
                 put(
                     withColor(
                         textField(
-                            "Guard", t.guard, { t.guard = it; commit() }, { Expressions.checkGuard(it, allowElse) },
+                            "Guard", t.guard, { t.guard = it; commit() },
+                            {
+                                if (allowElse && it.trim() == "else" && DiagramSession.elseTaken(s.model, src, t)) Check.fail(DiagramSession.elseTakenMessage(src!!))
+                                else Expressions.checkGuard(it, allowElse)
+                            },
                             if (allowElse) "e.g. hasDisc() && !isJammed(), or else" else "e.g. hasDisc() && !isJammed()",
                         ),
                         s, t, item("guard"), "the guard",
@@ -826,6 +879,13 @@ class PropertiesPanel(private val editor: EditorPanel) : EditorPanel.WidthTracki
                 )
             }
             put(withColor(textField("Action", t.action, { t.action = it; commit() }, Expressions::checkActions, "e.g. notify(); log()"), s, t, item("action"), "the action"))
+            // Pre/postconditions only count in a protocol state machine: shown when the transition has them, to remove them.
+            if (t.precondition.isNotEmpty()) {
+                put(withColor(textField("Precondition", t.precondition, { t.precondition = it; commit() }, Expressions::checkCondition), s, t, item("precondition"), "the precondition"))
+            }
+            if (t.postcondition.isNotEmpty()) {
+                put(withColor(textField("Postcondition", t.postcondition, { t.postcondition = it; commit() }, Expressions::checkCondition), s, t, item("postcondition"), "the postcondition"))
+            }
         }
         put(h4("Routing"))
         val routing = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }

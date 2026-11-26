@@ -75,6 +75,10 @@ object Tools {
 
     fun byKey(key: Char): ToolDefinition? = all.firstOrNull { it.key == key.lowercaseChar() }
 
+    /** Whether [model] may have what tool [id] makes: a protocol state machine has no history pseudostates. */
+    fun allowed(model: FsmModel?, id: String?): Boolean =
+        !(model != null && model.kind == MachineKind.Protocol && (id == "shallowHistory" || id == "deepHistory"))
+
     /** Pseudostate kinds that can be swapped for one another from the properties panel. */
     val swappable: List<List<VertexType>> = listOf(
         listOf(VertexType.Initial, VertexType.ShallowHistory, VertexType.DeepHistory, VertexType.Choice, VertexType.Junction, VertexType.Terminate),

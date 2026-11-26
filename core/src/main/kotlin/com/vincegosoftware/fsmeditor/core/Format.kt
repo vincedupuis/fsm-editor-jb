@@ -104,6 +104,7 @@ object Format {
             val m = ModelJson.read(it)
             model.name = m.name
             model.kind = m.kind
+            model.context = m.context
             model.documentation = m.documentation
             model.regions = m.regions
             model.vertices = m.vertices

@@ -465,6 +465,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         }
         canvas.repaint()
         updateTitle()
+        updateToolbox()
         renderStatus()
     }
 
@@ -485,6 +486,7 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
         host.write(s.model)?.let { toast(it) }
         canvas.repaint()
         updateTitle()
+        updateToolbox()
         renderStatus()
     }
 
@@ -1007,6 +1009,10 @@ class EditorPanel(private val host: EditorHost) : JPanel(BorderLayout()) {
     }
 
     private fun updateToolbox() {
+        val model = session?.model
+        if (canvas.tool != null && !Tools.allowed(model, canvas.tool)) canvas.setTool(null)
+        // A protocol state machine has no history pseudostates.
+        for ((id, row) in toolRows) row.isVisible = Tools.allowed(model, id)
         toolRows.values.forEach { it.repaint() }
     }
 

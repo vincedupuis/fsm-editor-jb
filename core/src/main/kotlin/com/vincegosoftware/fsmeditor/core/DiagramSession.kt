@@ -135,9 +135,9 @@ class DiagramSession(model: FsmModel) {
                 q !== e && (q.type == VertexType.EntryPoint || q.type == VertexType.ExitPoint) &&
                     (if (owner != null) q.parent == owner.id else index.vertex(q.parent) == null)
             }
-            val reserved = n == "history" || n == "deepHistory"
+            val reserved = n == "initial" || n == "history" || n == "deepHistory"
             if (mates.any { it.name == n } || reserved) {
-                return Check.fail("'$n' can't name this point: ${if (reserved) "it names history pseudostates" else "another point of its state has it"}.")
+                return Check.fail("'$n' can't name this point: ${if (reserved) "it names initial and history pseudostates" else "another point of its state has it"}.")
             }
             return Check.success(n)
         }
@@ -180,6 +180,7 @@ class DiagramSession(model: FsmModel) {
     /** Places a new element of tool [toolId] at [p]. Returns it, or null when refused. */
     fun createVertex(toolId: String, p: PointD): Vertex? {
         val create = Tools.byId(toolId)?.create ?: return null
+        if (!Tools.allowed(model, toolId)) return null
         reindex()
         val v = create(this)
         v.id = newId("v")
@@ -204,6 +205,10 @@ class DiagramSession(model: FsmModel) {
                     v.ref = pick.id
                     v.pointKind = pick.kind
                 }
+            }
+            if (s != null && v.type != VertexType.ConnectionPointRef && s.regions.isEmpty()) {
+                say("Only composite states have entry and exit points: add a region to '${Format.shown(s.name).ifEmpty { "the state" }}' first.")
+                return null
             }
             if (s != null) {
                 v.parent = s.id
@@ -281,6 +286,11 @@ class DiagramSession(model: FsmModel) {
     }
 
     fun removeRegion(state: Vertex, regionId: String) {
+        // Its last region: the state would keep entry or exit points that only composite states have.
+        if (state.regions.size == 1 && model.vertices.any { it.parent == state.id && (it.type == VertexType.EntryPoint || it.type == VertexType.ExitPoint) }) {
+            say("'${Format.shown(state.name).ifEmpty { "The state" }}' has entry or exit points, which only composite states have: remove them first.")
+            return
+        }
         val doomed = HashSet<String>()
         for (v in model.vertices) {
             if (v.parent != regionId) continue
@@ -317,7 +327,7 @@ class DiagramSession(model: FsmModel) {
         model.vertices = model.vertices.filterTo(mutableListOf()) { it.id !in ids }
         model.transitions = model.transitions
             .filterTo(mutableListOf()) { it.id !in transitionIds && it.source !in ids && it.target !in ids }
-        val alive = (model.vertices.map { it.id } + model.transitions.map { it.id }).toSet()
+        val alive = (model.vertices.map { it.id } + model.transitions.map { it.id } + allRegions().map { it.id } + MACHINE_ANCHOR).toSet()
         // An anchor that named nothing in the file (U+E001/U+E002 and its reference) is kept as it is.
         for (v in model.vertices) {
             v.anchors = v.anchors.filterTo(mutableListOf()) { it in alive || it.startsWith(Format.UNRESOLVED) || it.startsWith(Format.UNRESOLVED_ANCHOR) }
@@ -359,10 +369,6 @@ class DiagramSession(model: FsmModel) {
     fun connect(source: Vertex, targetId: String): Transition? {
         if (source.type == VertexType.Comment) {
             if (targetId == source.id) return null
-            anchorProblem(targetId)?.let {
-                say(it)
-                return null
-            }
             if (targetId !in source.anchors) source.anchors.add(targetId)
             selection = linkedSetOf(source.id)
             commit()
@@ -370,10 +376,6 @@ class DiagramSession(model: FsmModel) {
         }
         val target = index.vertex(targetId) ?: return null
         if (target.type == VertexType.Comment) {
-            anchorProblem(source.id)?.let {
-                say(it)
-                return null
-            }
             if (source.id !in target.anchors) target.anchors.add(source.id)
             commit()
             return null
@@ -388,25 +390,52 @@ class DiagramSession(model: FsmModel) {
             say(it)
             return null
         }
-        val t = Transition(newId("t"), source.id, target.id)
+        // UML: a transition leaving an entry point is local.
+        val t = Transition(newId("t"), source.id, target.id, if (source.type == VertexType.EntryPoint) TransitionKind.Local else TransitionKind.External)
         model.transitions.add(t)
         selection = linkedSetOf(t.id)
         commit()
         return t
     }
 
-    /** Why a comment can't be attached to element [id] (the file doesn't name an initial pseudostate or its transition), or null. */
-    private fun anchorProblem(id: String): String? {
-        val t = index.transition(id)
-        val v = if (t != null) index.vertex(t.source) else index.vertex(id)
-        return if (v != null && v.type == VertexType.Initial) ANCHOR_INITIAL else null
+    /** Every region: the machine's and its states'. */
+    fun allRegions(): List<Region> = model.regions + model.vertices.flatMap { it.regions }
+
+    /** The transitions leaving an entry or exit point that break its rule (inside its state; outside it), with the message. */
+    private fun pointViolations(): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        fun nm(x: Vertex) = "'${Format.shown(x.name).ifEmpty { x.type.title }}'"
+        for (t in model.transitions) {
+            val p = index.vertex(t.source)
+            val g = index.vertex(t.target)
+            val s = if (p != null && (p.type == VertexType.EntryPoint || p.type == VertexType.ExitPoint)) index.vertex(p.parent) else null
+            if (s == null || g == null) continue
+            val inside = index.isInside(g, s.id)
+            if (p!!.type == VertexType.EntryPoint && !inside) out[t.id] = "${nm(g)} is the target of entry point '${Format.shown(p.name)}': it stays inside ${nm(s)}."
+            if (p.type == VertexType.ExitPoint && (g === s || inside)) out[t.id] = "${nm(g)} is the target of exit point '${Format.shown(p.name)}': it stays outside ${nm(s)}."
+        }
+        return out
     }
 
-    private fun anchored(id: String) = model.vertices.any { it.type == VertexType.Comment && id in it.anchors }
+    /** Why moving vertices to the regions of [moves] (vertex → region id) would break the rule of a point's transition, or null. */
+    fun moveProblem(moves: Map<Vertex, String>): String? {
+        val before = pointViolations()
+        val old = moves.keys.associateWith { it.parent }
+        for ((v, r) in moves) v.parent = r
+        reindex()
+        val after = pointViolations()
+        for ((v, r) in old) v.parent = r
+        reindex()
+        return after.entries.firstOrNull { it.key !in before }?.value
+    }
 
-    /** Can a transition be drawn from [v] (its ⊕ handle, the transition tool)? Not from a final state, a terminate or an entry reference. */
+    /**
+     * Can a transition be drawn from [v] (its ⊕ handle, the transition tool)? Not from a final state, a terminate, an entry
+     * reference or an exit point of the state machine.
+     */
     fun canStartFrom(v: Vertex): Boolean =
-        !(v.type == VertexType.Final || v.type == VertexType.Terminate || (v.type == VertexType.ConnectionPointRef && v.pointKind == PointKind.Entry))
+        !(v.type == VertexType.Final || v.type == VertexType.Terminate || (v.type == VertexType.ConnectionPointRef && v.pointKind == PointKind.Entry) ||
+            (v.type == VertexType.ExitPoint && index.vertex(v.parent) == null))
 
     /** The one transition of an initial or history pseudostate, which drawing from it again moves to the new target. */
     private fun startTransition(v: Vertex): Transition? = if (isStart(v)) model.transitions.firstOrNull { it.source == v.id } else null
@@ -414,10 +443,10 @@ class DiagramSession(model: FsmModel) {
     /** Can a connection drawn from [source] end on element [id] (a vertex, or a transition for a comment's anchor)? */
     fun canConnect(source: Vertex, id: String): Boolean {
         if (source.type == VertexType.Comment) {
-            return id != source.id && (index.vertex(id) != null || index.transition(id) != null) && anchorProblem(id) == null
+            return id != source.id && (index.vertex(id) != null || index.transition(id) != null || id == MACHINE_ANCHOR || allRegions().any { it.id == id })
         }
         val target = index.vertex(id) ?: return false
-        if (target.type == VertexType.Comment) return anchorProblem(source.id) == null
+        if (target.type == VertexType.Comment) return true
         startTransition(source)?.let { return canReconnect(it, false, target) }
         return connectProblem(source, target) == null
     }
@@ -451,10 +480,32 @@ class DiagramSession(model: FsmModel) {
     private fun transitionProblem(t: Transition, source: Vertex, target: Vertex): String? =
         connectProblem(source, target, t) ?: when {
             t.kind == TransitionKind.Internal && source !== target -> "An internal transition stays on its state."
+            t.kind == TransitionKind.Local && !localOk(source, target) -> "A local transition goes from a composite state or an entry point to what it contains."
+            source.type == VertexType.EntryPoint && t.kind != TransitionKind.Local -> "A transition leaving an entry point is local."
             isStart(source) && beyondAction(t) -> startOnly(source)
-            source.type == VertexType.Initial && anchored(t.id) -> ANCHOR_INITIAL
+            t.guard.trim() == "else" && !Labels.allowsElse(source) -> ELSE_ONLY
+            model.kind == MachineKind.Protocol && t.precondition.trim() == "else" && !Labels.allowsElse(source) -> ELSE_ONLY
+            Labels.allowsElse(source) && (if (model.kind == MachineKind.Protocol) t.precondition else t.guard).trim() == "else" && elseTaken(model, source, t) -> elseTakenMessage(source)
+            t.triggers.isNotEmpty() && !takesTriggers(source, target) -> NO_TRIGGERS
+            (t.guard.isNotEmpty() || (model.kind == MachineKind.Protocol && t.precondition.isNotEmpty())) && !takesGuard(source, target) -> noGuard(model)
             else -> null
         }
+
+    /** Whether entry point [source] already has a transition (but [moving]) into the region of its state holding [target]. */
+    private fun secondIntoRegion(source: Vertex, target: Vertex, moving: Transition?): Boolean {
+        // One transition into each region of its state (of the machine, for the machine's own).
+        val state = index.vertex(source.parent)
+        val region = stateRegionOf(target, state) ?: return false
+        return model.transitions.any { t ->
+            t.source == source.id && t !== moving && index.vertex(t.target)?.let { stateRegionOf(it, state) } == region
+        }
+    }
+
+    /** The region of [state] (null: the machine's top-level regions) holding [v], itself or through the states around it. */
+    private fun stateRegionOf(v: Vertex, state: Vertex?): String? =
+        (listOf(v) + index.ancestors(v)).firstOrNull { w ->
+            if (state != null) index.regionOwner.containsKey(w.parent) && index.regionOwner[w.parent] === state else model.regions.any { it.id == w.parent }
+        }?.parent
 
     /**
      * Why vertices [vs] can't all be in region [regionId], or null when they can: a region has one initial, one shallow
@@ -477,17 +528,23 @@ class DiagramSession(model: FsmModel) {
         val outs = model.transitions.filter { it.source == v.id }
         val a = v.copy().also { it.type = type }
         if (type == VertexType.Terminate && outs.isNotEmpty()) return "A terminate cannot have outgoing transitions."
+        if (type == VertexType.Fork || type == VertexType.Join || type == VertexType.EntryPoint || type == VertexType.ExitPoint) {
+            for (t in outs) transitionProblem(t, a, index.vertex(t.target) ?: a)?.let { return it }
+            for (t in model.transitions.filter { it.target == v.id }) {
+                index.vertex(t.source)?.let { s -> transitionProblem(t, s, a) }?.let { return it }
+            }
+        }
         if (!isStart(a)) return null
         if (type == VertexType.Initial && model.transitions.any { it.target == v.id }) return "An initial pseudostate cannot be the target of a transition."
         if (outs.size > 1) return "A${if (type == VertexType.Initial) "n initial pseudostate" else " history pseudostate"} has one transition only."
         if (outs.any { beyondAction(it) }) return startOnly(a)
-        if (type == VertexType.Initial && (anchored(v.id) || outs.any { anchored(it.id) })) return ANCHOR_INITIAL
         return regionProblem(listOf(a), v.parent)
     }
 
-    /** The kinds pseudostate [v] can be swapped for (its own included): those the file can hold it as, with its transitions and region. */
+    /** The kinds pseudostate [v] can be swapped for (its own included): those the file can hold it as, with its transitions and region, and the machine can have. */
     fun typeOptions(v: Vertex): List<VertexType> =
-        (Tools.swappable.firstOrNull { v.type in it } ?: emptyList()).filter { typeProblem(v, it) == null }
+        (Tools.swappable.firstOrNull { v.type in it } ?: emptyList())
+            .filter { typeProblem(v, it) == null && (it == v.type || Tools.allowed(model, it.key)) }
 
     /** Why a transition can't go from [source] to [target], or null when it can ([moving]: the transition being reconnected). */
     private fun connectProblem(source: Vertex, target: Vertex, moving: Transition? = null): String? = when {
@@ -498,6 +555,22 @@ class DiagramSession(model: FsmModel) {
         source.type == VertexType.Final || source.type == VertexType.Terminate ->
             "A ${source.type.title.lowercase()} cannot have outgoing transitions."
         target.type == VertexType.Initial -> "An initial pseudostate cannot be the target of a transition."
+        source.type == VertexType.Fork && target.type != VertexType.State && target.type != VertexType.Final ->
+            "A transition leaving a fork must target a state."
+        target.type == VertexType.Join && source.type != VertexType.State -> "A transition entering a join must come from a state."
+        source.type == VertexType.Fork && model.transitions.any { it.source == source.id && it !== moving && index.vertex(it.target)?.parent == target.parent } ->
+            "The targets of a fork are in different orthogonal regions."
+        target.type == VertexType.Join && model.transitions.any { it.target == target.id && it !== moving && index.vertex(it.source)?.parent == source.parent } ->
+            "The sources of a join are in different orthogonal regions."
+        source.type == VertexType.ExitPoint && index.vertex(source.parent) == null ->
+            "An exit point of the state machine has no outgoing transitions: the submachine state using it continues from its reference."
+        source.type == VertexType.EntryPoint && index.vertex(source.parent) != null && !index.isInside(target, source.parent) ->
+            "A transition leaving an entry point goes to a vertex inside its state."
+        source.type == VertexType.ExitPoint && index.vertex(source.parent) != null && (target.id == source.parent || index.isInside(target, source.parent)) ->
+            "A transition leaving an exit point goes to a vertex outside its state."
+        target.type == VertexType.ConnectionPointRef && target.pointKind == PointKind.Entry && (source.id == target.parent || index.isInside(source, target.parent)) ->
+            "A transition into an entry reference comes from outside its submachine state."
+        source.type == VertexType.EntryPoint && secondIntoRegion(source, target, moving) -> "An entry point has one transition into each region."
         (source.type == VertexType.Initial || source.type == VertexType.ShallowHistory || source.type == VertexType.DeepHistory) &&
             model.transitions.any { it.source == source.id && it !== moving } ->
             "A${if (source.type == VertexType.Initial) "n initial pseudostate" else " history pseudostate"} has one transition only."
@@ -670,6 +743,30 @@ class DiagramSession(model: FsmModel) {
         return true
     }
 
+    /**
+     * The kinds [t] can be, its own included: external; internal, leaving a state; local, from a composite state or an
+     * entry point to what it contains.
+     */
+    fun kindOptions(t: Transition): List<TransitionKind> {
+        val s = index.vertex(t.source)
+        val local = localOk(s, index.vertex(t.target))
+        val internalOk = s != null && s.type == VertexType.State
+        // UML: a transition leaving an entry point is local, never external.
+        val external = s == null || s.type != VertexType.EntryPoint
+        return listOf(TransitionKind.External, TransitionKind.Local, TransitionKind.Internal).filter {
+            it == t.kind || (it == TransitionKind.External && external) || (it == TransitionKind.Local && local) || (it == TransitionKind.Internal && internalOk)
+        }
+    }
+
+    /** May a transition from [s] to [g] be local: from a composite state or an entry point to what it contains? */
+    private fun localOk(s: Vertex?, g: Vertex?): Boolean {
+        // The machine's own entry point: everything is inside the machine.
+        if (s != null && s.type == VertexType.EntryPoint && index.vertex(s.parent) == null) return g != null
+        val container = if (s == null) null else if (s.type == VertexType.EntryPoint) s.parent else s.id
+        return s != null && ((s.type == VertexType.State && s.regions.isNotEmpty()) || s.type == VertexType.EntryPoint) &&
+            g != null && (g == s || (container != null && index.isInside(g, container)))
+    }
+
     // ---------------------------------------------------------------- layout
     // Elements inside a composite state's region stay inside it: what would leave it grows the region,
     // its state and the states around it in turn, and moving back during the same drag undoes that.
@@ -687,7 +784,33 @@ class DiagramSession(model: FsmModel) {
         fun startOnly(v: Vertex) =
             "A transition leaving a${if (v.type == VertexType.Initial) "n initial" else " history"} pseudostate holds its target and an action only."
 
-        private const val ANCHOR_INITIAL = "A comment cannot be attached to an initial pseudostate or to its transition."
+        /** May a transition from [source] to [target] have triggers? Only one leaving a state (a pseudostate's are taken at once), and not into a join. */
+        fun takesTriggers(source: Vertex?, target: Vertex?): Boolean =
+            source != null && source.type == VertexType.State && target?.type != VertexType.Join
+
+        const val NO_TRIGGERS = "A transition leaving a pseudostate, or entering a join, cannot have triggers."
+
+        /**
+         * May a transition from [source] to [target] have a guard (a precondition, in a protocol machine)? Not one leaving
+         * an initial or history pseudostate, a fork or an entry point (whose transitions are all taken), or entering a join.
+         */
+        fun takesGuard(source: Vertex?, target: Vertex?): Boolean =
+            source != null && !isStart(source) && source.type != VertexType.Fork && source.type != VertexType.EntryPoint &&
+                target?.type != VertexType.Join
+
+        fun noGuard(model: FsmModel) =
+            "A transition leaving a fork or an entry point, or entering a join, cannot have a ${if (model.kind == MachineKind.Protocol) "precondition" else "guard"}."
+
+        private const val ELSE_ONLY = "[else] is only allowed on transitions leaving a choice or junction."
+
+        /** A comment's anchor to the state machine itself (which has no id of its own). */
+        const val MACHINE_ANCHOR = ""
+
+        /** Does another branch of choice or junction [s] than [t] have [else] (its guard, or in a protocol machine its precondition)? */
+        fun elseTaken(model: FsmModel, s: Vertex?, t: Transition): Boolean =
+            s != null && model.transitions.any { it !== t && it.source == s.id && (if (model.kind == MachineKind.Protocol) it.precondition else it.guard).trim() == "else" }
+
+        fun elseTakenMessage(s: Vertex) = "This ${s.type.title.lowercase()} already has an [else] branch."
 
         /** Space kept between a region's border and the elements in it. */
         const val FIT_MARGIN = 10.0
@@ -1181,6 +1304,10 @@ class DiagramSession(model: FsmModel) {
     fun leaveParent() {
         val roots = leavingElements()
         if (roots.isEmpty()) return
+        moveProblem(roots.associateWith { regionOwnerOf(it.parent)!!.parent })?.let {
+            say(it)
+            return
+        }
         for (v in roots) v.parent = regionOwnerOf(v.parent)!!.parent
         commit()
     }
@@ -1252,7 +1379,10 @@ class DiagramSession(model: FsmModel) {
                 // A group drops as a whole: into the region that holds all its members, or nowhere.
                 if (v !== roots.first { it.group == v.group }) continue
                 val gr = dropRegionOf(dropBox(v), v.parent, moving)
-                if (gr != null && regionProblem(groupMembers(v.group), gr.id) == null) for (m in groupMembers(v.group)) m.parent = gr.id
+                if (gr != null && regionProblem(groupMembers(v.group), gr.id) == null) {
+                    val problem = moveProblem(groupMembers(v.group).associateWith { gr.id })
+                    if (problem != null) say(problem) else for (m in groupMembers(v.group)) m.parent = gr.id
+                }
                 continue
             }
             if (v.type == VertexType.EntryPoint || v.type == VertexType.ExitPoint) {
@@ -1267,7 +1397,10 @@ class DiagramSession(model: FsmModel) {
                 continue
             }
             val r = dropRegionOf(v, moving)
-            if (r != null && regionProblem(listOf(v), r.id) == null) v.parent = r.id
+            if (r != null && regionProblem(listOf(v), r.id) == null) {
+                val problem = if (r.id != v.parent) moveProblem(mapOf(v to r.id)) else null
+                if (problem != null) say(problem) else v.parent = r.id
+            }
         }
         commit()
     }
